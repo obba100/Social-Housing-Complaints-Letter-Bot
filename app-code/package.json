@@ -9,9 +9,13 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "ai": "^3.2.10",
+    "@supabase/supabase-js": "^2.53.0",
+    "ai": "^3.4.33",
+    "cheerio": "^1.1.2",
     "formidable": "^3.5.4",
     "next": "15.4.5",
+    "openai": "^4.104.0",
+    "pdfjs-dist": "^5.4.54",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-markdown": "^10.1.0",
