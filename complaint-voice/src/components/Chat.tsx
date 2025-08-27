@@ -4,6 +4,34 @@ import React, { useEffect, useRef, useState } from 'react';
 
 // Add this declaration for speech recognition
 declare global {
+  interface SpeechRecognition extends EventTarget {
+    lang: string;
+    interimResults: boolean;
+    continuous: boolean;
+    onresult: (event: SpeechRecognitionEvent) => void;
+    onend: () => void;
+    start(): void;
+    stop(): void;
+  }
+  
+  interface SpeechRecognitionEvent {
+    results: SpeechRecognitionResultList;
+  }
+  
+  interface SpeechRecognitionResultList {
+    [index: number]: SpeechRecognitionResult;
+    length: number;
+  }
+  
+  interface SpeechRecognitionResult {
+    [index: number]: SpeechRecognitionAlternative;
+    length: number;
+  }
+  
+  interface SpeechRecognitionAlternative {
+    transcript: string;
+  }
+
   interface Window {
     webkitSpeechRecognition?: new () => SpeechRecognition;
     SpeechRecognition?: new () => SpeechRecognition;
