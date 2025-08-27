@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
   if (!(audio instanceof Blob)) {
     return NextResponse.json({ error: 'No audio' }, { status: 400 });
   }
-  const file = new File([audio], 'note.webm', { type: (audio as any).type || 'audio/webm' });
+  const file = new File([audio], 'note.webm', { type: audio.type || 'audio/webm' });
 
   const out = await openai.audio.transcriptions.create({
     file,

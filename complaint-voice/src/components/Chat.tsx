@@ -2,12 +2,22 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 
+// Add this declaration for speech recognition
+declare global {
+  interface Window {
+    webkitSpeechRecognition?: new () => SpeechRecognition;
+    SpeechRecognition?: new () => SpeechRecognition;
+  }
+}
+
 type Msg = {
   role: 'user' | 'assistant';
   content: string;
   meta?: { letter?: 'en' | 'translation'; md?: string; langLabel?: string };
 };
-type AnySR = any;
+
+// Fix the AnySR type
+type AnySR = SpeechRecognition | null;
 
 /* ---------------- Letter parsing & Copy helpers ---------------- */
 
@@ -159,8 +169,6 @@ const SparkleIcon = ({ className = '' }: { className?: string }) => (
   </span>
 );
 
-
-
 const DocumentIcon = ({ className = '' }: { className?: string }) => (
   <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
     <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z" />
@@ -218,7 +226,7 @@ export default function Chat() {
 
   // Speech recognition setup
   useEffect(() => {
-    const SR = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+    const SR = window.webkitSpeechRecognition || window.SpeechRecognition;
     if (SR) {
       const rec = new SR();
       rec.lang = 'en-GB';
@@ -312,10 +320,10 @@ export default function Chat() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: nextMessages, draft })
       });
-    } catch (e: any) {
+    } catch (e: unknown) {
       setMessages((prev) => {
         const updated = [...prev];
-        updated[holderIndex] = { role: 'assistant', content: `Network error: ${String(e?.message || e)}` };
+        updated[holderIndex] = { role: 'assistant', content: `Network error: ${String(e && typeof e === 'object' && 'message' in e ? e.message : e)}` };
         return updated;
       });
       setIsStreaming(false);
@@ -418,7 +426,7 @@ export default function Chat() {
         <div className="w-2 h-2 bg-gradient-to-r from-sky-300 to-sky-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
         <div className="w-2 h-2 bg-gradient-to-r from-sky-300 to-sky-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
       </div>
-      <span className="ml-1 text-sm text-gray-500">Barthomonew Buggercup is thinking</span>
+      <span className="ml-1 text-sm text-gray-500">AI is thinking</span>
     </div>
   );
 
@@ -433,9 +441,8 @@ export default function Chat() {
           <div className="flex items-center justify-between gap-3 border-b-2 border-amber-200/70 bg-gradient-to-r from-amber-100/60 via-yellow-100/50 to-amber-100/60 px-5 py-4">
             <div className="flex items-center gap-3 min-w-0">
               <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-amber-500 via-yellow-600 to-orange-600 flex items-center justify-center shadow-lg">
-  <SparkleIcon className="text-base leading-none translate-y-[1px] select-none" />
-</div>
-
+                <SparkleIcon className="w-4 h-4 text-white drop-shadow-sm" />
+              </div>
               <span className="text-base font-bold text-amber-900 truncate">{title}</span>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
@@ -468,28 +475,25 @@ export default function Chat() {
   };
 
   return (
-    <div className="flex flex-col h-full rounded-2xl overflow-hidden shadow-2xl">
-
+    <div className="flex flex-col h-screen max-h-screen bg-gradient-to-br from-gray-100 via-gray-50 to-sky-100/50">
       {/* Header - Polished style with gentle sky gradients */}
-  <header className="flex items-center gap-4 p-4 
-  bg-gradient-to-r from-sky-100 via-sky-50 to-sky-100 
-  border-b border-sky-200 shadow 
-  rounded-t-2xl">
-  
-  <div className="h-10 w-10 rounded-2xl bg-gradient-to-br from-sky-400 via-sky-500 to-sky-600 flex items-center justify-center shadow-md">
-    <span className="text-xl leading-none translate-y-[1px] select-none">📩</span>
-  </div>
-
-  <div className="min-w-0 flex-1">
-    <h1 className="text-[17px] md:text-lg font-semibold text-gray-900 tracking-tight">
-      Complaint Letter Assistant
-    </h1>
-    <p className="text-xs text-gray-700 mt-0.5">
-      Dictate or type your issue — we’ll draft your letter in plain English.
-    </p>
-  </div>
-</header>
-
+      <header className="flex items-center gap-4 p-4 bg-white/80 backdrop-blur-xl border-b border-gray-200/50 shadow-sm">
+        <div className="relative">
+          <div className="h-10 w-10 rounded-2xl bg-gradient-to-br from-sky-300 via-sky-400 to-sky-500 shadow-lg flex items-center justify-center">
+            <SparkleIcon className="w-5 h-5 text-white" />
+          </div>
+          <div className="absolute -right-1 -bottom-1 h-4 w-4 rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-white shadow-sm" title="Online" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-lg font-bold bg-gradient-to-r from-gray-900 via-gray-800 to-sky-700 bg-clip-text text-transparent">
+            Complaint Letter Assistant
+          </h1>
+          <p className="text-xs text-gray-600">
+            AI-powered help for social housing complaints • 
+            <span className="font-medium text-sky-600 ml-1">Draft letters in seconds</span>
+          </p>
+        </div>
+      </header>
 
       {/* Messages area - WhatsApp style */}
       <div 
@@ -500,10 +504,9 @@ export default function Chat() {
         {messages.length === 0 && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center max-w-md mx-auto px-4">
-             <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-sky-400 via-sky-500 to-sky-600 flex items-center justify-center mx-auto mb-4 shadow-lg">
-  <SparkleIcon className="text-3xl" />
-</div>
-
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-sky-50 to-sky-100 flex items-center justify-center mx-auto mb-4">
+                <SparkleIcon className="w-8 h-8 text-sky-500" />
+              </div>
               <h2 className="text-lg font-semibold text-gray-900 mb-2">Start Your Complaint</h2>
               <p className="text-gray-600 text-sm leading-relaxed">
                 Describe your housing issue, or use the mic to speak. Include dates, who you contacted, and what resolution you're seeking.
