@@ -233,7 +233,7 @@ export default function Chat() {
       rec.interimResults = true;
       rec.continuous = false;
       rec.onresult = (e: any) => {
-        const t = Array.from(e.results).map((r) => r[0].transcript).join(' ');
+        const t = Array.from(e.results).map((r: any) => r[0].transcript).join(' ');
         setInput(t);
       };
       rec.onend = () => setIsRecording(false);
