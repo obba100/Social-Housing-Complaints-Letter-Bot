@@ -268,11 +268,11 @@ function calculateTimelineBreaches(reportedDate: Date, issueType: string, childr
 /* -------------------------- WEB SEARCH FUNCTIONS -------------------------- */
 
 // General web search function
-async function performWebSearch(query: string, context: string = 'general', maxResults = 3) {
+async function performWebSearch(query: string, context: string = 'general', maxResults = 3, dynamicDomains: string[] = []) {
   try {
     const tavilyApiKey = process.env.TAVILY_API_KEY;
     if (tavilyApiKey) {
-      return await searchWithTavily(query, context, maxResults);
+      return await searchWithTavily(query, context, maxResults, dynamicDomains);
     }
 
     const serpApiKey = process.env.SERP_API_KEY;
