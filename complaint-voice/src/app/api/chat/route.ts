@@ -485,7 +485,7 @@ async function searchHousingAssociationContacts(housingAssociationName: string) 
       // Extract phone numbers
       const phones = text.match(phoneRegex) || [];
       if (phones.length > 0 && !contactInfo.phone) {
-        contactInfo.phone = phones[0];
+        contactInfo.phone = phones[0] || null;
       }
 
       // Store website (prefer official domain)
