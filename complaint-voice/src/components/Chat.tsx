@@ -232,7 +232,7 @@ export default function Chat() {
       rec.lang = 'en-GB';
       rec.interimResults = true;
       rec.continuous = false;
-      rec.onresult = (e: SpeechRecognitionEvent) => {
+      rec.onresult = (e: any) => {
         const t = Array.from(e.results).map((r) => r[0].transcript).join(' ');
         setInput(t);
       };
