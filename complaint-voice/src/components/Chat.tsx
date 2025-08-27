@@ -418,7 +418,7 @@ export default function Chat() {
         <div className="w-2 h-2 bg-gradient-to-r from-sky-300 to-sky-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
         <div className="w-2 h-2 bg-gradient-to-r from-sky-300 to-sky-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
       </div>
-      <span className="ml-1 text-sm text-gray-500">AI is thinking</span>
+      <span className="ml-1 text-sm text-gray-500">Barthomonew Buggercup is thinking</span>
     </div>
   );
 
