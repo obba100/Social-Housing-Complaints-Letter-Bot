@@ -9,11 +9,6 @@ declare global {
     SpeechRecognition?: any;
   }
 }
-  interface Window {
-    webkitSpeechRecognition?: new () => SpeechRecognition;
-    SpeechRecognition?: new () => SpeechRecognition;
-  }
-}
 
 type Msg = {
   role: 'user' | 'assistant';
