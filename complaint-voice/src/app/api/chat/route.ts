@@ -730,7 +730,7 @@ async function searchLegalKnowledge(query: string, conversationContext: string =
 
       if (crossRefData) {
        const existingIds = new Set(results.map((r: any) => r.id));
-        const newDocs = crossRefData.filter(doc => !existingIds.has(doc.id));
+        const newDocs = crossRefData.filter((doc: any) => !existingIds.has(doc.id));
         results = [...results, ...newDocs];
       }
     }
