@@ -189,6 +189,11 @@ export default function Chat() {
   // Streaming UI state
   const [isStreaming, setIsStreaming] = useState(false);
 
+  // NEW: sending guard and voice session tracking
+  const [isSending, setIsSending] = useState(false);
+  const voiceSessionRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
+
   // Refs
   const recognitionRef = useRef<AnySR | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -245,9 +250,24 @@ export default function Chat() {
   }, []);
 
   const startRecording = async () => {
+    const sessionId = ++voiceSessionRef.current;
+
     if (recognitionRef.current) {
+      const rec = recognitionRef.current;
+      rec.lang = 'en-GB';
+      rec.interimResults = true;
+      rec.continuous = true;
+
+      rec.onresult = (e: any) => {
+        if (voiceSessionRef.current !== sessionId || isSending) return;
+        const t = Array.from(e.results).map((r: any) => r[0].transcript).join(' ');
+        setInput(t);
+      };
+      rec.onend = () => {
+        if (voiceSessionRef.current === sessionId) setIsRecording(false);
+      };
       setIsRecording(true);
-      recognitionRef.current.start();
+      rec.start();
       return;
     }
     try {
@@ -263,12 +283,13 @@ export default function Chat() {
           fd.append('audio', blob, 'note.webm');
           const res = await fetch('/api/transcribe', { method: 'POST', body: fd });
           const data = await res.json();
-          if (data?.text) setInput(data.text);
+          if (voiceSessionRef.current === sessionId && !isSending && data?.text) setInput(data.text);
         } catch (error) {
           console.error('Transcription failed:', error);
         }
         setIsTranscribing(false);
         setIsRecording(false);
+        stream.getTracks().forEach(t => t.stop());
       };
       mr.start();
       mediaRecorderRef.current = mr;
@@ -278,38 +299,49 @@ export default function Chat() {
     }
   };
 
-  const stopRecording = () => {
+  const stopRecording = () => new Promise<void>((resolve) => {
     if (recognitionRef.current && isRecording) {
-      recognitionRef.current.stop();
+      const rec: AnySR = recognitionRef.current;
+      const prevOnEnd = rec.onend;
+      rec.onend = (...args: any[]) => {
+        try { prevOnEnd?.(...args); } catch {}
+        setIsRecording(false);
+        resolve();
+      };
+      rec.stop();
       return;
     }
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.addEventListener('stop', () => resolve(), { once: true });
       mediaRecorderRef.current.stop();
+      return;
     }
-  };
+    resolve();
+  });
 
   const send = async () => {
-  // Stop any active recording before sending
-  if (isRecording) {
-    stopRecording();
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  await sendWithPhase(false);
-};
+    if (isRecording) {
+      await stopRecording();
+    }
+    await sendWithPhase(false);
+  };
 
-const writeLetter = async () => {
-  // Stop any active recording before sending
-  if (isRecording) {
-    stopRecording();
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  await sendWithPhase(true);
-};
+  const writeLetter = async () => {
+    if (isRecording) {
+      await stopRecording();
+    }
+    await sendWithPhase(true);
+  };
 
   const sendWithPhase = async (draft: boolean) => {
     const text = input.trim();
     if (draft === false && !text) return;
-    if (isStreaming) return;
+    if (isStreaming || isSending) return;
+
+    setIsSending(true);
+
+    // Freeze current voice session so late events are ignored
+    voiceSessionRef.current += 1;
 
     const nextMessages: Msg[] = text ? [...messages, { role: 'user', content: text }] : [...messages];
 
@@ -328,10 +360,14 @@ const writeLetter = async () => {
 
     let res: Response | null = null;
     try {
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: nextMessages, draft })
+        body: JSON.stringify({ messages: nextMessages, draft }),
+        signal: controller.signal
       });
     } catch (e: unknown) {
       setMessages((prev) => {
@@ -340,6 +376,7 @@ const writeLetter = async () => {
         return updated;
       });
       setIsStreaming(false);
+      setIsSending(false);
       return;
     }
 
@@ -354,6 +391,7 @@ const writeLetter = async () => {
         return updated;
       });
       setIsStreaming(false);
+      setIsSending(false);
       return;
     }
 
@@ -408,6 +446,7 @@ const writeLetter = async () => {
     }
 
     setIsStreaming(false);
+    setIsSending(false);
     inputRef.current?.focus();
   };
 
@@ -419,13 +458,18 @@ const writeLetter = async () => {
   };
 
   // Auto-resize textarea like WhatsApp
+  // Auto-resize textarea like WhatsApp
   const adjustTextareaHeight = (textarea: HTMLTextAreaElement) => {
     textarea.style.height = 'auto';
     const scrollHeight = textarea.scrollHeight;
     const maxHeight = 96; // ~4 lines max
     textarea.style.height = Math.min(scrollHeight, maxHeight) + 'px';
     textarea.style.overflowY = scrollHeight > maxHeight ? 'scroll' : 'hidden';
+
+    // Ensure newest text is visible when at max height
+    textarea.scrollTop = textarea.scrollHeight;
   };
+
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
@@ -533,7 +577,7 @@ const writeLetter = async () => {
           const isLetterEn = m.meta?.letter === 'en';
           const isLetterTr = m.meta?.letter === 'translation';
 
-          if (isLetterEn) return <LetterBubble key={i} index={i} title="📝 Your Letter (English)" text={m.content} md={m.meta?.md} />;
+        if (isLetterEn) return <LetterBubble key={i} index={i} title="📝 Your Letter (English)" text={m.content} md={m.meta?.md} />;
 
           if (isLetterTr) {
             const lang = m.meta?.langLabel ? ` — ${m.meta.langLabel}` : '';
@@ -580,7 +624,7 @@ const writeLetter = async () => {
             {/* Draft letter button - now on the left */}
             <button
               onClick={writeLetter}
-              disabled={isStreaming}
+              disabled={isStreaming || isSending}
               className={[
                 'h-11 transition-all duration-200 shadow-lg flex-shrink-0 flex items-center justify-center',
                 'bg-gradient-to-r from-sky-300 via-sky-400 to-sky-500 text-white',
@@ -618,7 +662,7 @@ const writeLetter = async () => {
             {input.trim() ? (
               <button
                 onClick={send}
-                disabled={isStreaming}
+                disabled={isStreaming || isSending}
                 className="w-11 h-11 rounded-2xl bg-gradient-to-r from-sky-300 to-sky-400 text-white flex items-center justify-center transition-all duration-200 hover:shadow-lg disabled:opacity-50 flex-shrink-0"
                 title="Send message"
               >
@@ -627,7 +671,8 @@ const writeLetter = async () => {
             ) : (
               <button
                 type="button"
-                onClick={isRecording ? stopRecording : startRecording}
+                onClick={isRecording ? () => { stopRecording(); } : startRecording}
+                disabled={isStreaming || isSending}
                 aria-label={isRecording ? 'Stop recording' : 'Start recording'}
                 className={[
                   'relative w-11 h-11 rounded-2xl border transition-all duration-200 shadow-lg flex-shrink-0',

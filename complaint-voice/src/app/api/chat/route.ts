@@ -20,7 +20,7 @@ type Msg = { role: 'user' | 'assistant'; content: string };
 function calculateWorkingDays(startDate: Date, endDate: Date): number {
   let workingDays = 0;
   let currentDate = new Date(startDate);
-  
+
   while (currentDate <= endDate) {
     const dayOfWeek = currentDate.getDay();
     // 0 = Sunday, 6 = Saturday
@@ -29,16 +29,16 @@ function calculateWorkingDays(startDate: Date, endDate: Date): number {
     }
     currentDate.setDate(currentDate.getDate() + 1);
   }
-  
+
   return workingDays;
 }
 
 // Parse date from various formats, including relative dates
 function parseDate(dateString: string): Date | null {
   if (!dateString) return null;
-  
+
   const today = new Date();
-  
+
   // Handle relative dates like "X weeks ago", "X months ago", etc.
   const relativePatterns = [
     /(\d+)\s+weeks?\s+ago/i,
@@ -46,7 +46,7 @@ function parseDate(dateString: string): Date | null {
     /(\d+)\s+days?\s+ago/i,
     /(\d+)\s+years?\s+ago/i,
   ];
-  
+
   for (const pattern of relativePatterns) {
     const match = dateString.match(pattern);
     if (match) {
@@ -64,25 +64,25 @@ function parseDate(dateString: string): Date | null {
       return parsed;
     }
   }
-  
+
   // Existing absolute date parsing...
   const formats = [
     // UK formats
-    /(\d{1,2})\/(\d{1,2})\/(\d{4})/,  // DD/MM/YYYY
-    /(\d{1,2})-(\d{1,2})-(\d{4})/,   // DD-MM-YYYY
+    /(\d{1,2})\/(\d{1,2})\/(\d{4})/, // DD/MM/YYYY
+    /(\d{1,2})-(\d{1,2})-(\d{4})/, // DD-MM-YYYY
     /(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})/i,
     /(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})/i,
     // ISO format
-    /(\d{4})-(\d{1,2})-(\d{1,2})/,   // YYYY-MM-DD
+    /(\d{4})-(\d{1,2})-(\d{1,2})/, // YYYY-MM-DD
   ];
-  
+
   try {
     // First try built-in parsing
     const parsed = new Date(dateString);
     if (!isNaN(parsed.getTime())) {
       return parsed;
     }
-    
+
     // Try manual parsing for UK formats
     for (const format of formats) {
       const match = dateString.match(format);
@@ -90,17 +90,28 @@ function parseDate(dateString: string): Date | null {
         if (format.toString().includes('January|February')) {
           // Month name format
           const day = parseInt(match[1]);
-          const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
-                            'July', 'August', 'September', 'October', 'November', 'December'];
-          const month = monthNames.findIndex(m => m.toLowerCase() === match[2].toLowerCase());
+          const monthNames = [
+            'January',
+            'February',
+            'March',
+            'April',
+            'May',
+            'June',
+            'July',
+            'August',
+            'September',
+            'October',
+            'November',
+            'December',
+          ];
+          const month = monthNames.findIndex((m) => m.toLowerCase() === match[2].toLowerCase());
           const year = parseInt(match[3]);
           return new Date(year, month, day);
         } else if (format.toString().includes('Jan|Feb')) {
           // Short month format
           const day = parseInt(match[1]);
-          const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
-                            'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-          const month = monthNames.findIndex(m => m.toLowerCase() === match[2].toLowerCase());
+          const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          const month = monthNames.findIndex((m) => m.toLowerCase() === match[2].toLowerCase());
           const year = parseInt(match[3]);
           return new Date(year, month, day);
         } else {
@@ -115,7 +126,7 @@ function parseDate(dateString: string): Date | null {
   } catch (error) {
     console.error('Date parsing error:', error);
   }
-  
+
   return null;
 }
 
@@ -126,15 +137,19 @@ function getCurrentDateUK(): string {
     day: 'numeric',
     month: 'long',
     year: 'numeric',
-    timeZone: 'Europe/London'
+    timeZone: 'Europe/London',
   };
   return now.toLocaleDateString('en-GB', options);
 }
 
 // Extract date information from conversation
-function extractDatesFromConversation(messages: Msg[]): { reportedDate: Date | null, issueType: string, childrenAffected: boolean } {
-  const conversationText = messages.map(m => m.content).join(' ').toLowerCase();
-  
+function extractDatesFromConversation(messages: Msg[]): {
+  reportedDate: Date | null;
+  issueType: string;
+  childrenAffected: boolean;
+} {
+  const conversationText = messages.map((m) => m.content).join(' ').toLowerCase();
+
   // Look for date patterns, including relatives
   let reportedDate: Date | null = null;
   const datePatterns = [
@@ -142,9 +157,9 @@ function extractDatesFromConversation(messages: Msg[]): { reportedDate: Date | n
     /(?:first|initially|originally).*?(?:reported|contacted|told).*?(?:on|in|about)\s+([^.]+)/gi,
     /([^.]*(?:january|february|march|april|may|june|july|august|september|october|november|december)[^.]*)/gi,
     /([^.]*\d{1,2}\/\d{1,2}\/\d{4}[^.]*)/gi,
-    /(\d+\s+(?:weeks?|months?|days?|years?)\s+ago)/gi,  // Added relative pattern
+    /(\d+\s+(?:weeks?|months?|days?|years?)\s+ago)/gi, // Added relative pattern
   ];
-  
+
   for (const pattern of datePatterns) {
     const matches = conversationText.matchAll(pattern);
     for (const match of matches) {
@@ -157,25 +172,37 @@ function extractDatesFromConversation(messages: Msg[]): { reportedDate: Date | n
     }
     if (reportedDate) break;
   }
-  
+
   // Detect issue type
   let issueType = '';
   if (conversationText.includes('damp') || conversationText.includes('mould') || conversationText.includes('mold')) {
     issueType = 'damp_mould';
-  } else if (conversationText.includes('repair') || conversationText.includes('leak') || conversationText.includes('broken')) {
+  } else if (
+    conversationText.includes('repair') ||
+    conversationText.includes('leak') ||
+    conversationText.includes('broken')
+  ) {
     issueType = 'repairs';
-  } else if (conversationText.includes('heating') || conversationText.includes('boiler') || conversationText.includes('cold')) {
+  } else if (
+    conversationText.includes('heating') ||
+    conversationText.includes('boiler') ||
+    conversationText.includes('cold')
+  ) {
     issueType = 'heating';
   } else {
     issueType = 'general';
   }
-  
+
   // Detect children
-  const childrenAffected = conversationText.includes('child') || conversationText.includes('baby') || 
-                          conversationText.includes('infant') || conversationText.includes('kid') ||
-                          conversationText.includes('toddler') || conversationText.includes('son') ||
-                          conversationText.includes('daughter');
-  
+  const childrenAffected =
+    conversationText.includes('child') ||
+    conversationText.includes('baby') ||
+    conversationText.includes('infant') ||
+    conversationText.includes('kid') ||
+    conversationText.includes('toddler') ||
+    conversationText.includes('son') ||
+    conversationText.includes('daughter');
+
   return { reportedDate, issueType, childrenAffected };
 }
 
@@ -184,91 +211,104 @@ function calculateTimelineBreaches(reportedDate: Date, issueType: string, childr
   const today = new Date();
   const workingDaysElapsed = calculateWorkingDays(reportedDate, today);
   const calendarDaysElapsed = Math.floor((today.getTime() - reportedDate.getTime()) / (1000 * 60 * 60 * 24));
-  
-  const breaches = [];
-  
+
+  const breaches: Array<{
+    regulation: string;
+    requirement: string;
+    elapsed: number;
+    unit: string;
+    breached: boolean;
+    severity: 'moderate' | 'serious' | 'critical' | 'impending';
+  }> = [];
+
   // Housing Ombudsman Code breaches
   if (workingDaysElapsed > 5) {
     breaches.push({
-      regulation: "Housing Ombudsman Code Section 4.2",
-      requirement: "acknowledge complaint within 5 working days",
+      regulation: 'Housing Ombudsman Code Section 4.2',
+      requirement: 'acknowledge complaint within 5 working days',
       elapsed: workingDaysElapsed,
-      unit: "working days",
+      unit: 'working days',
       breached: true,
-      severity: "moderate"
+      severity: 'moderate',
     });
   }
-  
+
   if (workingDaysElapsed > 10) {
     breaches.push({
-      regulation: "Housing Ombudsman Code Section 4.2", 
-      requirement: "provide full response within 10 working days",
+      regulation: 'Housing Ombudsman Code Section 4.2',
+      requirement: 'provide full response within 10 working days',
       elapsed: workingDaysElapsed,
-      unit: "working days",
+      unit: 'working days',
       breached: true,
-      severity: "serious"
+      severity: 'serious',
     });
   }
-  
+
   // Awaab's Law for damp/mould with children - Conditional on enforcement date
   const awaabsLawEnforcementDate = new Date('2025-10-27');
   if (issueType === 'damp_mould' && childrenAffected && calendarDaysElapsed > 14 && today >= awaabsLawEnforcementDate) {
     breaches.push({
       regulation: "Social Housing Regulation Act 2023 (Awaab's Law)",
-      requirement: "investigate damp and mould affecting children within 14 days",
+      requirement: 'investigate damp and mould affecting children within 14 days',
       elapsed: calendarDaysElapsed,
-      unit: "calendar days",
+      unit: 'calendar days',
       breached: true,
-      severity: "critical"
+      severity: 'critical',
     });
   } else if (issueType === 'damp_mould' && childrenAffected && today < awaabsLawEnforcementDate) {
     breaches.push({
       regulation: "Social Housing Regulation Act 2023 (Awaab's Law)",
-      requirement: "investigate damp and mould affecting children within 14 days (effective from October 27, 2025)",
+      requirement:
+        'investigate damp and mould affecting children within 14 days (effective from October 27, 2025)',
       elapsed: calendarDaysElapsed,
-      unit: "calendar days",
-      breached: false,  // Not yet breached
-      severity: "impending"
+      unit: 'calendar days',
+      breached: false, // Not yet breached
+      severity: 'impending',
     });
   }
-  
+
   // Emergency repair timeframes
   if (issueType === 'heating' && calendarDaysElapsed > 1) {
     breaches.push({
-      regulation: "Section 11 of the Landlord and Tenant Act 1985",
-      requirement: "complete emergency heating repairs within 24 hours",
+      regulation: 'Section 11 of the Landlord and Tenant Act 1985',
+      requirement: 'complete emergency heating repairs within 24 hours',
       elapsed: calendarDaysElapsed,
-      unit: "calendar days",
+      unit: 'calendar days',
       breached: true,
-      severity: "serious"
+      severity: 'serious',
     });
   }
-  
+
   // General repair timeframes
   if (issueType === 'repairs' && calendarDaysElapsed > 28) {
     breaches.push({
-      regulation: "Section 11 of the Landlord and Tenant Act 1985",
-      requirement: "complete non-emergency repairs within reasonable time (typically 28 days)",
+      regulation: 'Section 11 of the Landlord and Tenant Act 1985',
+      requirement: 'complete non-emergency repairs within reasonable time (typically 28 days)',
       elapsed: calendarDaysElapsed,
-      unit: "calendar days",
+      unit: 'calendar days',
       breached: true,
-      severity: "moderate"
+      severity: 'moderate',
     });
   }
-  
+
   return {
     reportedDate,
     workingDaysElapsed,
     calendarDaysElapsed,
     breaches,
-    hasBreaches: breaches.length > 0
+    hasBreaches: breaches.length > 0,
   };
 }
 
 /* -------------------------- WEB SEARCH FUNCTIONS -------------------------- */
 
 // General web search function
-async function performWebSearch(query: string, context: string = 'general', maxResults = 3, dynamicDomains: string[] = []) {
+async function performWebSearch(
+  query: string,
+  context: string = 'general',
+  maxResults = 3,
+  dynamicDomains: string[] = []
+) {
   try {
     const tavilyApiKey = process.env.TAVILY_API_KEY;
     if (tavilyApiKey) {
@@ -303,22 +343,28 @@ function extractEmailsFromText(text: string): string[] {
 // Prioritize complaints-specific emails
 function prioritizeComplaintsEmails(emails: string[]): string[] {
   const complaintKeywords = ['complaint', 'complaints', 'feedback', 'customer', 'service', 'help', 'support'];
-  
-  const complaintsEmails = emails.filter(email => 
-    complaintKeywords.some(keyword => email.toLowerCase().includes(keyword))
+
+  const complaintsEmails = emails.filter((email) =>
+    complaintKeywords.some((keyword) => email.toLowerCase().includes(keyword))
   );
-  
-  const otherEmails = emails.filter(email => 
-    !complaintKeywords.some(keyword => email.toLowerCase().includes(keyword)) &&
-    !email.toLowerCase().includes('noreply') &&
-    !email.toLowerCase().includes('no-reply')
+
+  const otherEmails = emails.filter(
+    (email) =>
+      !complaintKeywords.some((keyword) => email.toLowerCase().includes(keyword)) &&
+      !email.toLowerCase().includes('noreply') &&
+      !email.toLowerCase().includes('no-reply')
   );
-  
+
   return [...complaintsEmails, ...otherEmails];
 }
 
 // Tavily search with dynamic domains based on context
-async function searchWithTavily(query: string, context: string, maxResults: number, dynamicDomains: string[] = []) {
+async function searchWithTavily(
+  query: string,
+  context: string,
+  maxResults: number,
+  dynamicDomains: string[] = []
+) {
   let includeDomains: string[] = dynamicDomains.length > 0 ? dynamicDomains : [];
   let searchQuery = query;
 
@@ -326,14 +372,18 @@ async function searchWithTavily(query: string, context: string, maxResults: numb
     case 'housing_association_contacts':
       searchQuery = `${query} complaints email address contact customer services`;
       if (!includeDomains.length) {
-        includeDomains = [];  // Now dynamic, set externally
+        includeDomains = []; // Now dynamic, set externally
       }
       break;
     case 'housing_law':
       searchQuery = `UK housing law ${query}`;
       includeDomains = [
-        'gov.uk', 'housing-ombudsman.org.uk', 'citizensadvice.org.uk',
-        'shelter.org.uk', 'legislation.gov.uk', 'rightsnet.org.uk'
+        'gov.uk',
+        'housing-ombudsman.org.uk',
+        'citizensadvice.org.uk',
+        'shelter.org.uk',
+        'legislation.gov.uk',
+        'rightsnet.org.uk',
       ];
       break;
   }
@@ -342,14 +392,14 @@ async function searchWithTavily(query: string, context: string, maxResults: numb
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.TAVILY_API_KEY}`
+      Authorization: `Bearer ${process.env.TAVILY_API_KEY}`,
     },
     body: JSON.stringify({
       query: searchQuery,
       search_depth: 'basic',
       include_domains: includeDomains.length > 0 ? includeDomains : undefined,
-      max_results: maxResults
-    })
+      max_results: maxResults,
+    }),
   });
 
   if (!response.ok) {
@@ -357,19 +407,21 @@ async function searchWithTavily(query: string, context: string, maxResults: numb
   }
 
   const data = await response.json();
-  return data.results?.map((result: any) => ({
-    title: result.title,
-    url: result.url,
-    content: result.content,
-    context: context,
-    source: 'web_search'
-  })) || [];
+  return (
+    data.results?.map((result: any) => ({
+      title: result.title,
+      url: result.url,
+      content: result.content,
+      context: context,
+      source: 'web_search',
+    })) || []
+  );
 }
 
 // SerpAPI search with context
 async function searchWithSerpAPI(query: string, context: string, maxResults: number) {
   let searchQuery = query;
-  
+
   switch (context) {
     case 'housing_association_contacts':
       searchQuery = `"${query}" complaints email address contact`;
@@ -378,35 +430,49 @@ async function searchWithSerpAPI(query: string, context: string, maxResults: num
       searchQuery = `UK housing law ${query} site:gov.uk OR site:housing-ombudsman.org.uk`;
       break;
   }
-  
-  const response = await fetch(`https://serpapi.com/search?engine=google&q=${encodeURIComponent(searchQuery)}&api_key=${process.env.SERP_API_KEY}&num=${maxResults}`);
+
+  const response = await fetch(
+    `https://serpapi.com/search?engine=google&q=${encodeURIComponent(searchQuery)}&api_key=${
+      process.env.SERP_API_KEY
+    }&num=${maxResults}`
+  );
 
   if (!response.ok) {
     throw new Error(`SerpAPI search failed: ${response.status}`);
   }
 
   const data = await response.json();
-  return data.organic_results?.map((result: any) => ({
-    title: result.title,
-    url: result.link,
-    content: result.snippet,
-    context: context,
-    source: 'web_search'
-  })) || [];
+  return (
+    data.organic_results?.map((result: any) => ({
+      title: result.title,
+      url: result.link,
+      content: result.snippet,
+      context: context,
+      source: 'web_search',
+    })) || []
+  );
 }
 
 // Google Custom Search with context
-async function searchWithGoogle(query: string, context: string, maxResults: number, apiKey: string, cseId: string) {
+async function searchWithGoogle(
+  query: string,
+  context: string,
+  maxResults: number,
+  apiKey: string,
+  cseId: string
+) {
   let searchQuery = query;
-  
+
   if (context === 'housing_association_contacts') {
     searchQuery = `"${query}" complaints email customer services contact`;
   } else if (context === 'housing_law') {
     searchQuery = `UK housing law ${query}`;
   }
-  
+
   const response = await fetch(
-    `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${cseId}&q=${encodeURIComponent(searchQuery)}&num=${maxResults}`
+    `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${cseId}&q=${encodeURIComponent(
+      searchQuery
+    )}&num=${maxResults}`
   );
 
   if (!response.ok) {
@@ -414,40 +480,48 @@ async function searchWithGoogle(query: string, context: string, maxResults: numb
   }
 
   const data = await response.json();
-  return data.items?.map((item: any) => ({
-    title: item.title,
-    url: item.link,
-    content: item.snippet,
-    context: context,
-    source: 'web_search'
-  })) || [];
+  return (
+    data.items?.map((item: any) => ({
+      title: item.title,
+      url: item.link,
+      content: item.snippet,
+      context: context,
+      source: 'web_search',
+    })) || []
+  );
 }
 
 // Enhanced function to search for housing association contact details with focused email search and domain validation
 async function searchHousingAssociationContacts(housingAssociationName: string) {
   console.log(`🔍 Searching for ${housingAssociationName} contact details`);
-  
+
   try {
     // Dynamic domains based on housing association name
     const nameLower = housingAssociationName.toLowerCase().replace(/\s+/g, '');
     const dynamicDomains = [`${nameLower}.com`, `${nameLower}.org.uk`, `${nameLower}.co.uk`];
 
     // Primary search for general contact info
-    const generalResults = await performWebSearch(housingAssociationName, 'housing_association_contacts', 3, dynamicDomains);
-    
+    const generalResults = await performWebSearch(
+      housingAssociationName,
+      'housing_association_contacts',
+      3,
+      dynamicDomains
+    );
+
     // Focused search specifically for complaints email
     const emailResults = await performWebSearch(
-      `"${housingAssociationName}" complaints email address customer service`, 
-      'housing_association_contacts', 
+      `"${housingAssociationName}" complaints email address customer service`,
+      'housing_association_contacts',
       2,
       dynamicDomains
     );
-    
-    const allResults = [...emailResults, ...generalResults].filter(result => 
-      // Validate URL matches association name
-      result.url.toLowerCase().includes(nameLower)
+
+    const allResults = [...emailResults, ...generalResults].filter(
+      (result) =>
+        // Validate URL matches association name
+        result.url.toLowerCase().includes(nameLower)
     );
-    
+
     if (allResults.length === 0) {
       console.warn(`⚠️ No contact details found for ${housingAssociationName}`);
       return null;
@@ -459,7 +533,7 @@ async function searchHousingAssociationContacts(housingAssociationName: string) 
       complaintsEmail: null as string | null,
       phone: null as string | null,
       website: null as string | null,
-      address: null as string | null
+      address: null as string | null,
     };
 
     const phoneRegex = /(0\d{10}|0\d{4}\s?\d{3}\s?\d{3}|0\d{3}\s?\d{3}\s?\d{4})/g;
@@ -467,19 +541,19 @@ async function searchHousingAssociationContacts(housingAssociationName: string) 
     // Process all results to extract contact information
     for (const result of allResults) {
       const text = `${result.title} ${result.content}`;
-      
+
       // Extract all emails and prioritize complaints emails
       const emails = extractEmailsFromText(text);
       const prioritizedEmails = prioritizeComplaintsEmails(emails);
-      
+
       // Set complaints email (highest priority)
       if (prioritizedEmails.length > 0 && !contactInfo.complaintsEmail) {
         contactInfo.complaintsEmail = prioritizedEmails[0];
       }
-      
+
       // Set general email if no complaints email found
       if (emails.length > 0 && !contactInfo.email) {
-        contactInfo.email = emails.find(email => !email.includes('noreply')) || emails[0];
+        contactInfo.email = emails.find((email) => !email.includes('noreply')) || emails[0];
       }
 
       // Extract phone numbers
@@ -501,7 +575,6 @@ async function searchHousingAssociationContacts(housingAssociationName: string) 
 
     console.log(`✅ Found contact info for ${housingAssociationName}:`, contactInfo);
     return contactInfo;
-    
   } catch (error) {
     console.error(`❌ Error searching for ${housingAssociationName} contacts:`, error);
     return null;
@@ -531,19 +604,19 @@ function latestUserText(messages: Msg[]): string {
 async function searchRelevantLegislation(conversationContext: string) {
   try {
     console.log('🔍 Searching for relevant housing legislation...');
-    
+
     const contextLower = conversationContext.toLowerCase();
-    const legislationSearches = [];
-    
+    const legislationSearches: string[] = [];
+
     // Build dynamic search queries based on actual issues mentioned
     if (contextLower.includes('damp') || contextLower.includes('mould') || contextLower.includes('mold')) {
       legislationSearches.push(
         'UK damp mould legislation 2023 2024 2025 children housing law',
         'Social Housing Regulation Act damp mould investigation timeline',
-        'Awaab\'s Law enforcement date damp mould children'
+        "Awaab's Law enforcement date damp mould children"
       );
     }
-    
+
     if (contextLower.includes('repair') || contextLower.includes('leak') || contextLower.includes('broken')) {
       legislationSearches.push(
         'UK housing repair legislation obligations landlord 2023 2024',
@@ -551,7 +624,7 @@ async function searchRelevantLegislation(conversationContext: string) {
         'Housing Act repair notices enforcement recent updates'
       );
     }
-    
+
     if (contextLower.includes('heating') || contextLower.includes('boiler') || contextLower.includes('cold')) {
       legislationSearches.push(
         'UK heating emergency repair legislation timeline obligations',
@@ -559,7 +632,7 @@ async function searchRelevantLegislation(conversationContext: string) {
         'emergency heating repair legal requirements landlord'
       );
     }
-    
+
     if (contextLower.includes('complaint') || contextLower.includes('response') || contextLower.includes('timeline')) {
       legislationSearches.push(
         'Housing Ombudsman Code 2023 2024 complaint handling timeline',
@@ -567,24 +640,20 @@ async function searchRelevantLegislation(conversationContext: string) {
         'housing complaint legislation update timeline requirements'
       );
     }
-    
+
     // Always search for general housing legislation updates
-    legislationSearches.push(
-      'UK housing legislation updates 2024 2025 tenant rights',
-      'recent housing law changes social housing regulation'
-    );
-    
-    const allResults = [];
-    
+    legislationSearches.push('UK housing legislation updates 2024 2025 tenant rights', 'recent housing law changes social housing regulation');
+
+    const allResults: any[] = [];
+
     // Perform focused searches
     for (const searchQuery of legislationSearches) {
       const webResults = await performWebSearch(searchQuery, 'housing_law', 3);
       allResults.push(...webResults);
     }
-    
+
     console.log(`✅ Found ${allResults.length} potential legislation sources`);
     return allResults;
-    
   } catch (error) {
     console.error('Legislation search error:', error);
     return [];
@@ -596,10 +665,10 @@ async function searchLegalKnowledge(query: string, conversationContext: string =
   try {
     // Combine query with conversation context for better matching
     const searchText = `${query} ${conversationContext}`.slice(0, 1000);
-    
+
     // Get embedding for the query
     const embedding = await openai.embeddings.create({
-      model: "text-embedding-3-small",
+      model: 'text-embedding-3-small',
       input: searchText,
     });
 
@@ -607,7 +676,7 @@ async function searchLegalKnowledge(query: string, conversationContext: string =
     const { data, error } = await supabase.rpc('match_documents', {
       query_embedding: embedding.data[0].embedding,
       match_threshold: 0.5, // More permissive to get more sources
-      match_count: limit
+      match_count: limit,
     });
 
     if (error) {
@@ -617,47 +686,51 @@ async function searchLegalKnowledge(query: string, conversationContext: string =
 
     let results = data || [];
 
-    // AGGRESSIVE CROSS-REFERENCING: Search for all related legal areas
+    // AGGRESSIVE CROSS-REFERENCING
     const queryLower = query.toLowerCase();
     const contextLower = conversationContext.toLowerCase();
     const combinedText = `${queryLower} ${contextLower}`;
-    
-    const crossReferenceSearches = [];
-    
-    // For ANY housing issue, always include these core areas
+
+    const crossReferenceSearches: Promise<any>[] = [];
+
+    // Always include these core areas
     crossReferenceSearches.push(
-      // Housing Ombudsman Code - always relevant for complaints
       openai.embeddings.create({
-        model: "text-embedding-3-small",
-        input: "Housing Ombudsman Code complaint handling timeline response landlord obligations compensation remedies",
+        model: 'text-embedding-3-small',
+        input:
+          'Housing Ombudsman Code complaint handling timeline response landlord obligations compensation remedies',
       }),
-      // Section 11 duties - fundamental repair obligations
       openai.embeddings.create({
-        model: "text-embedding-3-small", 
-        input: "Section 11 Landlord Tenant Act 1985 repair obligations structure exterior",
+        model: 'text-embedding-3-small',
+        input: 'Section 11 Landlord Tenant Act 1985 repair obligations structure exterior',
       }),
-      // Fitness for habitation
       openai.embeddings.create({
-        model: "text-embedding-3-small",
-        input: "Homes Fitness Human Habitation Act 2018 landlord duties standards",
+        model: 'text-embedding-3-small',
+        input: 'Homes Fitness Human Habitation Act 2018 landlord duties standards',
       })
     );
-    
+
     // Issue-specific cross-referencing
-    if (combinedText.includes('damp') || combinedText.includes('mould') || combinedText.includes('mold') || 
-        combinedText.includes('condensation') || combinedText.includes('baby') || combinedText.includes('child')) {
+    if (
+      combinedText.includes('damp') ||
+      combinedText.includes('mould') ||
+      combinedText.includes('mold') ||
+      combinedText.includes('condensation') ||
+      combinedText.includes('baby') ||
+      combinedText.includes('child')
+    ) {
       crossReferenceSearches.push(
         openai.embeddings.create({
-          model: "text-embedding-3-small",
+          model: 'text-embedding-3-small',
           input: "Awaab's Law Social Housing Regulation Act 2023 damp mould investigation timeline children",
         }),
         openai.embeddings.create({
-          model: "text-embedding-3-small",
-          input: "HHSRS Health Safety Rating System Category 1 hazards damp excess cold",
+          model: 'text-embedding-3-small',
+          input: 'HHSRS Health Safety Rating System Category 1 hazards damp excess cold',
         }),
         openai.embeddings.create({
-          model: "text-embedding-3-small",
-          input: "Housing Act 1985 Section 9A hazard assessment disrepair notice",
+          model: 'text-embedding-3-small',
+          input: 'Housing Act 1985 Section 9A hazard assessment disrepair notice',
         })
       );
     }
@@ -665,16 +738,16 @@ async function searchLegalKnowledge(query: string, conversationContext: string =
     if (combinedText.includes('repair') || combinedText.includes('maintenance') || combinedText.includes('broken')) {
       crossReferenceSearches.push(
         openai.embeddings.create({
-          model: "text-embedding-3-small",
-          input: "Landlord Tenant Act 1985 repair covenants implied terms structure exterior",
+          model: 'text-embedding-3-small',
+          input: 'Landlord Tenant Act 1985 repair covenants implied terms structure exterior',
         }),
         openai.embeddings.create({
-          model: "text-embedding-3-small",
-          input: "Housing Act 1985 fitness standard repair notice enforcement",
+          model: 'text-embedding-3-small',
+          input: 'Housing Act 1985 fitness standard repair notice enforcement',
         }),
         openai.embeddings.create({
-          model: "text-embedding-3-small",
-          input: "Defective Premises Act 1972 landlord duty care safety",
+          model: 'text-embedding-3-small',
+          input: 'Defective Premises Act 1972 landlord duty care safety',
         })
       );
     }
@@ -682,25 +755,29 @@ async function searchLegalKnowledge(query: string, conversationContext: string =
     if (combinedText.includes('heating') || combinedText.includes('boiler') || combinedText.includes('cold')) {
       crossReferenceSearches.push(
         openai.embeddings.create({
-          model: "text-embedding-3-small",
-          input: "HHSRS excess cold Category 1 hazard heating systems emergency repair",
+          model: 'text-embedding-3-small',
+          input: 'HHSRS excess cold Category 1 hazard heating systems emergency repair',
         }),
         openai.embeddings.create({
-          model: "text-embedding-3-small",
-          input: "Section 11 Landlord Tenant Act heating installations emergency timeline",
+          model: 'text-embedding-3-small',
+          input: 'Section 11 Landlord Tenant Act heating installations emergency timeline',
         })
       );
     }
 
-    if (combinedText.includes('noise') || combinedText.includes('antisocial') || combinedText.includes('neighbour')) {
+    if (
+      combinedText.includes('noise') ||
+      combinedText.includes('antisocial') ||
+      combinedText.includes('neighbour')
+    ) {
       crossReferenceSearches.push(
         openai.embeddings.create({
-          model: "text-embedding-3-small",
-          input: "antisocial behaviour landlord duty tenancy conditions quiet enjoyment",
+          model: 'text-embedding-3-small',
+          input: 'antisocial behaviour landlord duty tenancy conditions quiet enjoyment',
         }),
         openai.embeddings.create({
-          model: "text-embedding-3-small",
-          input: "Housing Act 1996 antisocial behaviour noise nuisance landlord obligations",
+          model: 'text-embedding-3-small',
+          input: 'Housing Act 1996 antisocial behaviour noise nuisance landlord obligations',
         })
       );
     }
@@ -708,29 +785,29 @@ async function searchLegalKnowledge(query: string, conversationContext: string =
     // Always include compensation and enforcement
     crossReferenceSearches.push(
       openai.embeddings.create({
-        model: "text-embedding-3-small",
-        input: "Housing Ombudsman compensation remedies maladministration service failure awards",
+        model: 'text-embedding-3-small',
+        input: 'Housing Ombudsman compensation remedies maladministration service failure awards',
       }),
       openai.embeddings.create({
-        model: "text-embedding-3-small",
-        input: "Regulator Social Housing Consumer Standards enforcement landlord obligations",
+        model: 'text-embedding-3-small',
+        input: 'Regulator Social Housing Consumer Standards enforcement landlord obligations',
       })
     );
 
     // Execute all cross-reference searches in parallel
     const crossReferenceEmbeddings = await Promise.all(crossReferenceSearches);
-    
+
     // Search for each cross-reference area
     for (const embeddingResponse of crossReferenceEmbeddings) {
       const { data: crossRefData } = await supabase.rpc('match_documents', {
         query_embedding: embeddingResponse.data[0].embedding,
         match_threshold: 0.4, // Even more permissive for cross-referencing
-        match_count: 3
+        match_count: 3,
       });
 
       if (crossRefData) {
-       const existingIds = new Set(results.map((r: any) => r.id));
-        const newDocs = crossRefData.filter((doc: any) => !existingIds.has(doc.id));
+        const existingIds = new Set(results.map((r: any) => r.id));
+        const newDocs = (crossRefData as any[]).filter((doc: any) => !existingIds.has(doc.id));
         results = [...results, ...newDocs];
       }
     }
@@ -746,16 +823,16 @@ async function searchLegalKnowledge(query: string, conversationContext: string =
 // Format legal context for prompts with comprehensive coverage and timeline breaches
 function formatLegalContext(legalDocs: any[], timelineAnalysis: any = null): string {
   const currentDate = getCurrentDateUK();
-  
+
   if (!legalDocs.length && !timelineAnalysis) {
     console.warn('⚠️ No legal documents or timeline analysis found');
     return '';
   }
-  
+
   console.log(`📚 Formatting ${legalDocs.length} legal documents for AI context`);
-  
+
   let context = `CURRENT DATE: ${currentDate} - Use this for all date references and calculations.\n\n`;
-  
+
   // Add timeline breach analysis if available
   if (timelineAnalysis && timelineAnalysis.hasBreaches) {
     context += `🚨 CRITICAL TIMELINE BREACH ANALYSIS:\n`;
@@ -764,25 +841,25 @@ function formatLegalContext(legalDocs: any[], timelineAnalysis: any = null): str
     context += `Working Days Elapsed: ${timelineAnalysis.workingDaysElapsed}\n`;
     context += `Calendar Days Elapsed: ${timelineAnalysis.calendarDaysElapsed}\n\n`;
     context += `REGULATORY BREACHES IDENTIFIED:\n`;
-    
+
     timelineAnalysis.breaches.forEach((breach: any, i: number) => {
       context += `${i + 1}. ${breach.regulation}\n`;
       context += `   Required: ${breach.requirement}\n`;
       context += `   Elapsed: ${breach.elapsed} ${breach.unit} (${breach.breached ? 'BREACH' : 'IMPENDING'})\n`;
       context += `   Severity: ${breach.severity.toUpperCase()}\n\n`;
     });
-    
+
     context += `IMPORTANT: These timeline breaches must be prominently featured in any complaint letter as they provide concrete evidence of regulatory non-compliance.\n\n`;
   }
-  
+
   // Add legal documents
   if (legalDocs.length > 0) {
     // Separate legislation updates from other sources
-    const legislationSources = legalDocs.filter(doc => doc.metadata?.source === 'legislation_search');
-    const otherSources = legalDocs.filter(doc => doc.metadata?.source !== 'legislation_search');
-    
+    const legislationSources = legalDocs.filter((doc) => doc.metadata?.source === 'legislation_search');
+    const otherSources = legalDocs.filter((doc) => doc.metadata?.source !== 'legislation_search');
+
     let sourcesContext = '';
-    
+
     // Prioritize recent legislation updates
     if (legislationSources.length > 0) {
       sourcesContext += `\n🚨 RECENT LEGISLATION UPDATES (${legislationSources.length} sources):\n`;
@@ -791,7 +868,7 @@ function formatLegalContext(legalDocs: any[], timelineAnalysis: any = null): str
         .join('\n\n');
       sourcesContext += '\n\nIMPORTANT: These are recent/current legislative updates that must be prominently referenced if relevant to the case.\n';
     }
-    
+
     // Then add other legal knowledge
     if (otherSources.length > 0) {
       sourcesContext += `\n📚 ESTABLISHED LEGAL KNOWLEDGE (${otherSources.length} sources):\n`;
@@ -799,38 +876,40 @@ function formatLegalContext(legalDocs: any[], timelineAnalysis: any = null): str
         .map((doc, i) => `[LEGAL SOURCE ${i + 1}]\nFrom: ${doc.metadata?.source || 'Unknown'}\n${doc.content}`)
         .join('\n\n');
     }
-      
-    context += sourcesContext + `\n\nUSE THIS LEGAL KNOWLEDGE extensively with specific citations. Always reference exact legal provisions, timeframes, and obligations. For example: "Under Section 11 of the Landlord and Tenant Act 1985, they must..." or "The Housing Ombudsman Code Section 4.2 requires response within 10 working days" or "Awaab's Law (Social Housing Regulation Act 2023) mandates investigation within 14 days". Cross-reference multiple sources to build the strongest possible legal case. Be precise about which laws apply and what the exact requirements are. MANDATORY: Every legal claim must cite 2-3 different statutory authorities minimum. Build layered arguments showing how issues violate multiple regulations simultaneously.`;
+
+    context +=
+      sourcesContext +
+      `\n\nUSE THIS LEGAL KNOWLEDGE extensively with specific citations. Always reference exact legal provisions, timeframes, and obligations. For example: "Under Section 11 of the Landlord and Tenant Act 1985, they must..." or "The Housing Ombudsman Code Section 4.2 requires response within 10 working days" or "Awaab's Law (Social Housing Regulation Act 2023) mandates investigation within 14 days". Cross-reference multiple sources to build the strongest possible legal case. Be precise about which laws apply and what the exact requirements are. MANDATORY: Every legal claim must cite 2-3 different statutory authorities minimum. Build layered arguments showing how issues violate multiple regulations simultaneously.`;
   }
-  
+
   return context;
 }
 
 // Deterministic language detection (improved to avoid false switches on names/addresses)
 async function detectUserLang(text: string): Promise<{ code: string; name: string }> {
   if (!text.trim()) return { code: 'en', name: 'English' };
-  
+
   const trimmed = text.trim();
-  
+
   // Don't detect on very short text unless it contains clear language indicators
   if (trimmed.length < 10) {
     // Allow detection for clear greetings/language words even if short
     const languageWords = ['salut', 'hola', 'bonjour', 'guten', 'ciao', 'buongiorno', 'buenos'];
-    const hasLanguageWord = languageWords.some(word => trimmed.toLowerCase().includes(word));
+    const hasLanguageWord = languageWords.some((word) => trimmed.toLowerCase().includes(word));
     if (!hasLanguageWord) {
       return { code: 'en', name: 'English' };
     }
   }
-  
+
   // Skip detection if text looks like names, addresses, or proper nouns
   const words = trimmed.split(/\s+/);
   if (words.length <= 3) {
     // Check if it looks like a name (mostly capitalized words)
-    const capitalizedWords = words.filter(word => /^[A-Z][a-z]+$/.test(word));
+    const capitalizedWords = words.filter((word) => /^[A-Z][a-z]+$/.test(word));
     if (capitalizedWords.length === words.length && words.length >= 2) {
       return { code: 'en', name: 'English' }; // Likely a name like "John Smith"
     }
-    
+
     // Check if it looks like an address pattern
     const hasNumbers = /\d/.test(trimmed);
     const hasAddressWords = /\b(street|road|avenue|lane|drive|close|way|court|place|st|rd|ave)\b/i.test(trimmed);
@@ -838,7 +917,7 @@ async function detectUserLang(text: string): Promise<{ code: string; name: strin
       return { code: 'en', name: 'English' }; // Likely an address
     }
   }
-  
+
   const det = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     temperature: 0,
@@ -866,7 +945,7 @@ async function detectUserLang(text: string): Promise<{ code: string; name: strin
 // One-time banner translated to the user's language
 async function translateOneTimeBanner(targetLangName: string) {
   const englishBanner =
-    "No problem — we can continue in your language. When you're ready to write the letter, I'll produce it in English for your landlord and include a translation in your language.\n\nI use the latest Housing Ombudsman Code, legislation, and regulatory guidance (including 2024 updates), so my answers are based on the most up‑to‑date information from official sources you can verify.";
+    "No problem — we can continue in your language. When you're ready to write the letter, I'll produce it in English for your landlord and include a translation in your language.\n\nI use the latest Housing Ombudsman Code, legislation, and regulatory guidance (including 2024 updates), so my answers are based on the most up-to-date information from official sources you can verify.";
   const tr = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     temperature: 0,
@@ -885,7 +964,7 @@ async function translateOneTimeBanner(targetLangName: string) {
 
 function createGuidedChatPrompt(userLangCode: string, userLangName: string, isEnglish: boolean, legalContext: string) {
   const currentDate = getCurrentDateUK();
-  
+
   return `
 You are a warm, empathetic housing complaint expert who guides people naturally through creating powerful complaint letters. You feel like talking to a knowledgeable friend who happens to be a housing law specialist.
 
@@ -989,7 +1068,7 @@ ${legalContext}
 
 function createLegallyRobustLetterPrompt(userLangCode: string, userLangName: string, isEnglish: boolean, legalContext: string) {
   const currentDate = getCurrentDateUK();
-  
+
   return `
 You are an expert at writing legally robust, compelling UK housing complaint letters that get results. You combine precise legal knowledge with persuasive writing to create letters that landlords cannot ignore.
 
@@ -1149,12 +1228,12 @@ export async function POST(req: NextRequest) {
 
     // Extract timeline information from conversation - AUTOMATIC BREACH DETECTION
     const timelineInfo = extractDatesFromConversation(history);
-    let timelineAnalysis = null;
-    
+    let timelineAnalysis: any = null;
+
     if (timelineInfo.reportedDate) {
       timelineAnalysis = calculateTimelineBreaches(
-        timelineInfo.reportedDate, 
-        timelineInfo.issueType, 
+        timelineInfo.reportedDate,
+        timelineInfo.issueType,
         timelineInfo.childrenAffected
       );
       console.log('📅 TIMELINE BREACH ANALYSIS:', timelineAnalysis);
@@ -1163,7 +1242,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Search legal knowledge based on user's query AND conversation context - GET MORE SOURCES FOR CROSS-REFERENCING
-    const conversationContext = history.map(m => m.content).join(' ');
+    const conversationContext = history.map((m) => m.content).join(' ');
     const legalDocs = latest ? await searchLegalKnowledge(latest, conversationContext, 15) : [];
     const legalContext = formatLegalContext(legalDocs, timelineAnalysis);
 
@@ -1200,7 +1279,7 @@ export async function POST(req: NextRequest) {
               controller.enqueue(encoder.encode(translated + '\n\n'));
             }
             for await (const chunk of modelStream) {
-              const delta = chunk.choices?.[0]?.delta?.content || '';
+              const delta = (chunk as any).choices?.[0]?.delta?.content || '';
               if (delta) controller.enqueue(encoder.encode(delta));
             }
           } catch (error) {
@@ -1221,16 +1300,16 @@ export async function POST(req: NextRequest) {
 
     // Extract housing association name for contact search
     let housingAssociationName = '';
-    let contactInfo = null;
-    
+    let contactInfo: any = null;
+
     // Look for housing association mentions in conversation
-    const conversationText = history.map(m => m.content).join(' ');
+    const conversationText = history.map((m) => m.content).join(' ');
     const housingAssociationPatterns = [
       /(?:housing association|landlord|housing provider).*?(?:is|called|named)\s+([^.]+)/gi,
       /([^.\s]+\s*(?:housing|homes|group|living))/gi,
-      /(clarion|peabody|guinness|sanctuary|riverside|places for people|notting hill|wandle)/gi
+      /(clarion|peabody|guinness|sanctuary|riverside|places for people|notting hill|wandle)/gi,
     ];
-    
+
     for (const pattern of housingAssociationPatterns) {
       const matches = conversationText.matchAll(pattern);
       for (const match of matches) {
@@ -1242,7 +1321,7 @@ export async function POST(req: NextRequest) {
       }
       if (housingAssociationName) break;
     }
-    
+
     // Search for contact details if housing association identified
     if (housingAssociationName) {
       console.log(`🔍 Searching contacts for: ${housingAssociationName}`);
@@ -1252,20 +1331,22 @@ export async function POST(req: NextRequest) {
     // DYNAMIC LEGISLATION SEARCH - Find all relevant laws for this case
     console.log('🔍 Performing dynamic legislation search for letter...');
     const legislationResults = await searchRelevantLegislation(conversationContext);
-    
+
     // Enhanced legal knowledge search with additional legislation context
     const enhancedLegalDocs = latest ? await searchLegalKnowledge(latest, conversationContext, 15) : [];
-    
+
     // Combine all legal sources
     const allLegalSources = [...enhancedLegalDocs];
     if (legislationResults.length > 0) {
-      allLegalSources.push(...legislationResults.map(result => ({
-        id: `legislation_${result.url}`,
-        content: `Recent Legislation Update: ${result.content}`,
-        metadata: { source: 'legislation_search', url: result.url }
-      })));
+      allLegalSources.push(
+        ...legislationResults.map((result: any) => ({
+          id: `legislation_${result.url}`,
+          content: `Recent Legislation Update: ${result.content}`,
+          metadata: { source: 'legislation_search', url: result.url },
+        }))
+      );
     }
-    
+
     const enhancedLegalContext = formatLegalContext(allLegalSources, timelineAnalysis);
     // Add contact information to legal context
     let finalLegalContext = enhancedLegalContext;
@@ -1376,7 +1457,6 @@ IMPORTANT: Use the complaints email address (${contactInfo.complaintsEmail || co
     return new Response(readable, {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' },
     });
-
   } catch (error) {
     console.error('Main API handler error:', error);
     return new Response('Internal server error', { status: 500 });
