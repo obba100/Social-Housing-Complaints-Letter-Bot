@@ -197,14 +197,17 @@ export default function Chat() {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    // Focus and reset height when input is cleared
-    if (inputRef.current) {
-      inputRef.current.focus();
-      if (!input) {
-        inputRef.current.style.height = 'auto';
-      }
+  // Focus and adjust height when input changes (typing or voice)
+  if (inputRef.current) {
+    inputRef.current.focus();
+    if (!input) {
+      inputRef.current.style.height = 'auto';
+    } else {
+      // Adjust height for voice input
+      adjustTextareaHeight(inputRef.current);
     }
-  }, [input]);
+  }
+}, [input]);
 
   // Initial focus on mount
   useEffect(() => {
@@ -231,7 +234,7 @@ export default function Chat() {
       const rec = new SR();
       rec.lang = 'en-GB';
       rec.interimResults = true;
-      rec.continuous = false;
+      rec.continuous = true;
       rec.onresult = (e: any) => {
         const t = Array.from(e.results).map((r: any) => r[0].transcript).join(' ');
         setInput(t);
@@ -286,12 +289,22 @@ export default function Chat() {
   };
 
   const send = async () => {
-    await sendWithPhase(false);
-  };
+  // Stop any active recording before sending
+  if (isRecording) {
+    stopRecording();
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  await sendWithPhase(false);
+};
 
-  const writeLetter = async () => {
-    await sendWithPhase(true);
-  };
+const writeLetter = async () => {
+  // Stop any active recording before sending
+  if (isRecording) {
+    stopRecording();
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  await sendWithPhase(true);
+};
 
   const sendWithPhase = async (draft: boolean) => {
     const text = input.trim();
