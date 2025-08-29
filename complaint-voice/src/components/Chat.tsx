@@ -387,33 +387,38 @@ export default function Chat() {
   };
 
   // Add custom styles for animations
-  React.useEffect(() => {
-    const style = document.createElement('style');
-    style.textContent = `
-      @keyframes fade-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-      @keyframes float { 0%,100% { transform: translateY(0);} 50% { transform: translateY(-4px);} }
-      @keyframes slide-in { from { opacity: 0; transform: translateX(-20px);} to { opacity: 1; transform: translateX(0);} }
-      @keyframes pulse-subtle { 0%,100% { transform: scale(1.1);} 50% { transform: scale(1.15);} }
-      @keyframes pulse-slow { 0%,100% { opacity: 1;} 50% { opacity: 0.6;} }
-      .animate-fade-in { animation: fade-in 0.6s ease-out forwards; }
-      .animate-float { animation: float 3s ease-in-out infinite; }
-      .animate-slide-in { animation: slide-in 0.4s ease-out forwards; opacity: 0; }
-      .animate-pulse-subtle { animation: pulse-subtle 2s ease-in-out infinite; }
-      .animate-pulse-slow { animation: pulse-slow 3s ease-in-out infinite; }
-      .scrollbar-thin { scrollbar-width: thin; }
-      .scrollbar-thumb-sky-200 { scrollbar-color: #bae6fd transparent; }
-      .scrollbar-track-transparent { scrollbar-track-color: transparent; }
-      .scrollbar-thin::-webkit-scrollbar { width: 6px; }
-      .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
-      .scrollbar-thin::-webkit-scrollbar-thumb { background-color: #bae6fd; border-radius: 3px; transition: background-color 0.2s ease; }
-      .scrollbar-thin::-webkit-scrollbar-thumb:hover { background-color: #7dd3fc; }
-      .shadow-3xl { box-shadow: 0 35px 60px -12px rgba(0,0,0,0.25); }
-      .hover-lift { transition: all 0.3s cubic-bezier(0.4,0,0.2,1); }
-      .hover-lift:hover { transform: translateY(-2px); box-shadow: 0 20px 40px rgba(0,0,0,0.15); }
-    `;
-    document.head.appendChild(style);
-    return () => document.head.removeChild(style);
-  }, []);
+React.useEffect(() => {
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes fade-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes float { 0%,100% { transform: translateY(0);} 50% { transform: translateY(-4px);} }
+    @keyframes slide-in { from { opacity: 0; transform: translateX(-20px);} to { opacity: 1; transform: translateX(0);} }
+    @keyframes pulse-subtle { 0%,100% { transform: scale(1.1);} 50% { transform: scale(1.15);} }
+    @keyframes pulse-slow { 0%,100% { opacity: 1;} 50% { opacity: 0.6;} }
+    .animate-fade-in { animation: fade-in 0.6s ease-out forwards; }
+    .animate-float { animation: float 3s ease-in-out infinite; }
+    .animate-slide-in { animation: slide-in 0.4s ease-out forwards; opacity: 0; }
+    .animate-pulse-subtle { animation: pulse-subtle 2s ease-in-out infinite; }
+    .animate-pulse-slow { animation: pulse-slow 3s ease-in-out infinite; }
+    .scrollbar-thin { scrollbar-width: thin; }
+    .scrollbar-thumb-sky-200 { scrollbar-color: #bae6fd transparent; }
+    .scrollbar-track-transparent { scrollbar-track-color: transparent; }
+    .scrollbar-thin::-webkit-scrollbar { width: 6px; }
+    .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background-color: #bae6fd; border-radius: 3px; transition: background-color 0.2s ease; }
+    .scrollbar-thin::-webkit-scrollbar-thumb:hover { background-color: #7dd3fc; }
+    .shadow-3xl { box-shadow: 0 35px 60px -12px rgba(0,0,0,0.25); }
+    .hover-lift { transition: all 0.3s cubic-bezier(0.4,0,0.2,1); }
+    .hover-lift:hover { transform: translateY(-2px); box-shadow: 0 20px 40px rgba(0,0,0,0.15); }
+  `;
+  document.head.appendChild(style);
+
+  // IMPORTANT: do not return the removed node; just perform the side-effect
+  return () => {
+    style.remove();
+  };
+}, []);
+
 
   // Improved scroll to bottom
   const scrollToBottom = useCallback(() => {
