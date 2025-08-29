@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 
 // Add this declaration for speech recognition
 declare global {
@@ -127,18 +127,170 @@ const CopyButton: React.FC<{
   );
 };
 
-/* -------- Markdown renderer -------- */
-function renderMarkdown(md: string): React.ReactNode {
-  const segments = md.split(/(\*\*[^*]+\*\*)/g);
+/* -------- Improved Markdown renderer (bold + italics + simple lists/headings) -------- */
+
+const renderInline = (s: string, keyBase: string) => {
+  // Split on bold first, keep delimiters
+  const boldParts = s.split(/(\*\*[^*]+\*\*)/g);
+
+  return boldParts.map((bp, bi) => {
+    const boldMatch = bp.match(/^\*\*([^*]+)\*\*$/);
+    if (boldMatch) {
+      return (
+        <strong key={`${keyBase}-b-${bi}`} className="font-semibold text-gray-900">
+          {boldMatch[1]}
+        </strong>
+      );
+    }
+
+    // Inside non-bold segments, support italics with *...* or _..._
+    const italicParts = bp.split(/(\*[^*]+\*|_[^_]+_)/g);
+    return italicParts.map((ip, ii) => {
+      const iMatch = ip.match(/^\*(.+)\*$/) || ip.match(/^_(.+)_$/);
+      if (iMatch) {
+        return (
+          <em key={`${keyBase}-i-${bi}-${ii}`} className="italic text-gray-800">
+            {iMatch[1]}
+          </em>
+        );
+      }
+      // Handle explicit line breaks within inline segments
+      const withBreaks = ip.split(/ {2,}\n|\\n/g);
+      return withBreaks.map((chunk, ci) =>
+        ci < withBreaks.length - 1 ? (
+          <React.Fragment key={`${keyBase}-t-${bi}-${ii}-${ci}`}>
+            {chunk}
+            <br />
+          </React.Fragment>
+        ) : (
+          <span key={`${keyBase}-t-${bi}-${ii}-${ci}`}>{chunk}</span>
+        )
+      );
+    });
+  });
+};
+
+const renderList = (
+  items: { text: string }[],
+  ordered: boolean,
+  blockKey: string
+) => {
+  if (ordered) {
+    return (
+      <ol key={blockKey} className="list-decimal ml-6 my-2 space-y-1 text-gray-900">
+        {items.map((it, i) => (
+          <li key={`${blockKey}-li-${i}`} className="pl-1">
+            {renderInline(it.text, `${blockKey}-li-${i}`)}
+          </li>
+        ))}
+      </ol>
+    );
+  }
   return (
-    <>
-      {segments.map((seg, i) => {
-        const m = seg.match(/^\*\*([^*]+)\*\*$/);
-        if (m) return <strong key={i} className="font-semibold text-gray-900">{m[1]}</strong>;
-        return <span key={i}>{seg}</span>;
-      })}
-    </>
+    <ul key={blockKey} className="list-disc ml-6 my-2 space-y-1 text-gray-900">
+      {items.map((it, i) => (
+        <li key={`${blockKey}-li-${i}`} className="pl-1">
+          {renderInline(it.text, `${blockKey}-li-${i}`)}
+        </li>
+      ))}
+    </ul>
   );
+};
+
+const renderHeader = (text: string, level: number, key: string) => {
+  const sizes: Record<number, string> = {
+    1: 'text-xl',
+    2: 'text-lg',
+    3: 'text-base',
+  };
+  const cls = `${sizes[level] || 'text-base'} font-bold text-gray-900 mt-3 mb-1`;
+  const Tag = (`h${Math.min(3, Math.max(1, level))}` as keyof JSX.IntrinsicElements);
+  return <Tag key={key} className={cls}>{renderInline(text, key)}</Tag>;
+};
+
+const renderParagraph = (text: string, key: string) => (
+  <p key={key} className="my-2 leading-relaxed text-gray-900">
+    {renderInline(text, key)}
+  </p>
+);
+
+function renderMarkdown(md: string): React.ReactNode {
+  if (!md) return null;
+
+  const lines = md.replace(/\r\n/g, '\n').split('\n');
+  const out: React.ReactNode[] = [];
+
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Skip pure empty lines (they end paragraphs)
+    if (/^\s*$/.test(line)) {
+      i += 1;
+      continue;
+    }
+
+    // Headings: #, ##, ###
+    const h = line.match(/^(#{1,3})\s+(.*)$/);
+    if (h) {
+      out.push(renderHeader(h[2].trim(), h[1].length, `h-${i}`));
+      i += 1;
+      continue;
+    }
+
+    // Horizontal rule (--- or ___)
+    if (/^[-_]{3,}\s*$/.test(line)) {
+      out.push(<hr key={`hr-${i}`} className="my-3 border-amber-200/70" />);
+      i += 1;
+      continue;
+    }
+
+    // Lists (unordered)
+    const ulMatch = line.match(/^\s*[-*]\s+(.+)$/);
+    if (ulMatch) {
+      const items: { text: string }[] = [];
+      while (i < lines.length) {
+        const m = lines[i].match(/^\s*[-*]\s+(.+)$/);
+        if (!m) break;
+        items.push({ text: m[1] });
+        i += 1;
+      }
+      out.push(renderList(items, false, `ul-${i}-${items.length}`));
+      continue;
+    }
+
+    // Lists (ordered)
+    const olMatch = line.match(/^\s*\d+\.\s+(.+)$/);
+    if (olMatch) {
+      const items: { text: string }[] = [];
+      while (i < lines.length) {
+        const m = lines[i].match(/^\s*\d+\.\s+(.+)$/);
+        if (!m) break;
+        items.push({ text: m[1] });
+        i += 1;
+      }
+      out.push(renderList(items, true, `ol-${i}-${items.length}`));
+      continue;
+    }
+
+    // Paragraph: accumulate until blank line or block boundary
+    const para: string[] = [line];
+    i += 1;
+    while (
+      i < lines.length &&
+      !/^\s*$/.test(lines[i]) &&
+      !/^(#{1,3})\s+/.test(lines[i]) &&
+      !/^\s*[-*]\s+/.test(lines[i]) &&
+      !/^\s*\d+\.\s+/.test(lines[i]) &&
+      !/^[-_]{3,}\s*$/.test(lines[i])
+    ) {
+      para.push(lines[i]);
+      i += 1;
+    }
+    out.push(renderParagraph(para.join('\n'), `p-${i}`));
+  }
+
+  return <>{out}</>;
 }
 
 /* -------------------- Icons -------------------- */
@@ -194,12 +346,117 @@ export default function Chat() {
   const voiceSessionRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Scroll state
+  const [showScrollButton, setShowScrollButton] = useState(false);
+  const [isUserScrolling, setIsUserScrolling] = useState(false);
+  const [headerBlur, setHeaderBlur] = useState(false);
+
   // Refs
   const recognitionRef = useRef<AnySR | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+
+  // Add custom styles for animations
+  React.useEffect(() => {
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes fade-in {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes float {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-4px); }
+      }
+      @keyframes slide-in {
+        from { opacity: 0; transform: translateX(-20px); }
+        to { opacity: 1; transform: translateX(0); }
+      }
+      @keyframes pulse-subtle {
+        0%, 100% { transform: scale(1.1); }
+        50% { transform: scale(1.15); }
+      }
+      @keyframes pulse-slow {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.6; }
+      }
+      .animate-fade-in {
+        animation: fade-in 0.6s ease-out forwards;
+      }
+      .animate-float {
+        animation: float 3s ease-in-out infinite;
+      }
+      .animate-slide-in {
+        animation: slide-in 0.4s ease-out forwards;
+        opacity: 0;
+      }
+      .animate-pulse-subtle {
+        animation: pulse-subtle 2s ease-in-out infinite;
+      }
+      .animate-pulse-slow {
+        animation: pulse-slow 3s ease-in-out infinite;
+      }
+      .scrollbar-thin {
+        scrollbar-width: thin;
+      }
+      .scrollbar-thumb-sky-200 {
+        scrollbar-color: #bae6fd transparent;
+      }
+      .scrollbar-track-transparent {
+        scrollbar-track-color: transparent;
+      }
+      /* Webkit scrollbar styles */
+      .scrollbar-thin::-webkit-scrollbar {
+        width: 6px;
+      }
+      .scrollbar-thin::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      .scrollbar-thin::-webkit-scrollbar-thumb {
+        background-color: #bae6fd;
+        border-radius: 3px;
+        transition: background-color 0.2s ease;
+      }
+      .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+        background-color: #7dd3fc;
+      }
+      .shadow-3xl {
+        box-shadow: 0 35px 60px -12px rgba(0, 0, 0, 0.25);
+      }
+      /* Advanced hover effects */
+      .hover-lift {
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      .hover-lift:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+      }
+    `;
+    document.head.appendChild(style);
+    return () => document.head.removeChild(style);
+  }, []);
+
+  // Improved scroll to bottom that actually works
+  const scrollToBottom = useCallback(() => {
+    if (!scrollerRef.current) return;
+    
+    requestAnimationFrame(() => {
+      if (scrollerRef.current) {
+        scrollerRef.current.scrollTop = scrollerRef.current.scrollHeight;
+      }
+    });
+  }, []);
+
+  // Handle scroll for dynamic header blur - debounced for performance
+  const handleScroll = useCallback(() => {
+    if (!scrollerRef.current) return;
+    const scrolled = scrollerRef.current.scrollTop > 20;
+    if (scrolled !== headerBlur) {
+      setHeaderBlur(scrolled);
+    }
+  }, [headerBlur]);
 
   useEffect(() => {
   // Focus and adjust height when input changes (typing or voice)
@@ -219,18 +476,10 @@ export default function Chat() {
     inputRef.current?.focus();
   }, []);
 
-  // Auto-scroll to bottom on updates
+  // Auto-scroll to bottom on updates - simplified and more reliable
   useEffect(() => {
-    if (!scrollerRef.current) return;
-    const scroller = scrollerRef.current;
-    // Use requestAnimationFrame for smoother scrolling
-    requestAnimationFrame(() => {
-      scroller.scrollTo({
-        top: scroller.scrollHeight,
-        behavior: 'smooth'
-      });
-    });
-  }, [messages, isStreaming]);
+    scrollToBottom();
+  }, [messages, isStreaming, scrollToBottom]);
 
   // Speech recognition setup
   useEffect(() => {
@@ -458,7 +707,6 @@ export default function Chat() {
   };
 
   // Auto-resize textarea like WhatsApp
-  // Auto-resize textarea like WhatsApp
   const adjustTextareaHeight = (textarea: HTMLTextAreaElement) => {
     textarea.style.height = 'auto';
     const scrollHeight = textarea.scrollHeight;
@@ -470,22 +718,40 @@ export default function Chat() {
     textarea.scrollTop = textarea.scrollHeight;
   };
 
-
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
     adjustTextareaHeight(e.target);
   };
 
-  const TypingDots = () => (
-    <div className="flex items-center gap-2">
-      <div className="flex space-x-1">
-        <div className="w-2 h-2 bg-gradient-to-r from-sky-300 to-sky-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-        <div className="w-2 h-2 bg-gradient-to-r from-sky-300 to-sky-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-        <div className="w-2 h-2 bg-gradient-to-r from-sky-300 to-sky-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+  const TypingDots = () => {
+    const [messageIndex, setMessageIndex] = useState(0);
+    const typingMessages = [
+      "AI is thinking",
+      "Analyzing your request",
+      "Crafting your response",
+      "Almost ready"
+    ];
+
+    useEffect(() => {
+      const interval = setInterval(() => {
+        setMessageIndex(prev => (prev + 1) % typingMessages.length);
+      }, 2000);
+      return () => clearInterval(interval);
+    }, []);
+
+    return (
+      <div className="flex items-center gap-2">
+        <div className="flex space-x-1">
+          <div className="w-2 h-2 bg-gradient-to-r from-sky-300 to-sky-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+          <div className="w-2 h-2 bg-gradient-to-r from-sky-300 to-sky-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+          <div className="w-2 h-2 bg-gradient-to-r from-sky-300 to-sky-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+        </div>
+        <span className="ml-1 text-sm text-gray-500 transition-all duration-500">
+          {typingMessages[messageIndex]}...
+        </span>
       </div>
-      <span className="ml-1 text-sm text-gray-500">AI is thinking</span>
-    </div>
-  );
+    );
+  };
 
   /* --------------------------- UI --------------------------- */
 
@@ -494,10 +760,10 @@ export default function Chat() {
     
     return (
       <div className="mb-6 flex justify-start">
-        <div className="max-w-[90%] rounded-3xl overflow-hidden border-2 border-amber-200/80 bg-gradient-to-br from-amber-50/90 via-yellow-50/80 to-orange-50/70 backdrop-blur-md shadow-2xl ring-1 ring-amber-100/60">
-          <div className="flex items-center justify-between gap-3 border-b-2 border-amber-200/70 bg-gradient-to-r from-amber-100/60 via-yellow-100/50 to-amber-100/60 px-5 py-4">
+        <div className="max-w-[90%] rounded-3xl overflow-hidden border-2 border-amber-200/80 bg-gradient-to-br from-amber-50/90 via-yellow-50/80 to-orange-50/70 backdrop-blur-md shadow-2xl ring-1 ring-amber-100/60 hover-lift group">
+          <div className="flex items-center justify-between gap-3 border-b-2 border-amber-200/70 bg-gradient-to-r from-amber-100/60 via-yellow-100/50 to-amber-100/60 px-5 py-4 group-hover:from-amber-200/60 group-hover:via-yellow-200/50 group-hover:to-amber-200/60 transition-all duration-300">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-amber-500 via-yellow-600 to-orange-600 flex items-center justify-center shadow-lg">
+              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-amber-500 via-yellow-600 to-orange-600 flex items-center justify-center shadow-lg group-hover:shadow-xl transition-all duration-300">
                 <SparkleIcon className="w-4 h-4 text-white drop-shadow-sm" />
               </div>
               <span className="text-base font-bold text-amber-900 truncate">{title}</span>
@@ -532,37 +798,48 @@ export default function Chat() {
   };
 
   return (
-    <div className="flex flex-col h-screen max-h-screen bg-gradient-to-br from-gray-100 via-gray-50 to-sky-100/50">
-      {/* Header - Polished style with gentle sky gradients */}
-      <header className="flex items-center gap-4 p-4 bg-white/80 backdrop-blur-xl border-b border-gray-200/50 shadow-sm">
-        <div className="relative">
-          <div className="h-10 w-10 rounded-2xl bg-gradient-to-br from-sky-300 via-sky-400 to-sky-500 shadow-lg flex items-center justify-center">
-            <SparkleIcon className="w-5 h-5 text-white" />
-          </div>
-          <div className="absolute -right-1 -bottom-1 h-4 w-4 rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-white shadow-sm" title="Online" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <h1 className="text-lg font-bold bg-gradient-to-r from-gray-900 via-gray-800 to-sky-700 bg-clip-text text-transparent">
-            Complaint Letter Assistant
-          </h1>
-          <p className="text-xs text-gray-600">
-            AI-powered help for social housing complaints • 
-            <span className="font-medium text-sky-600 ml-1">Draft letters in seconds</span>
-          </p>
-        </div>
-      </header>
+    <div className="flex flex-col h-[85vh] min-h-[500px] max-h-[900px] w-full max-w-full overflow-hidden 
+                bg-gradient-to-br from-gray-100 via-gray-50 to-sky-100/50 
+                rounded-t-3xl shadow-lg">
 
-      {/* Messages area - WhatsApp style */}
+  {/* Header - dynamic blur based on scroll */}
+  <header className={`flex-shrink-0 flex items-center gap-4 p-3 
+                     bg-gradient-to-r from-sky-100 via-sky-200 to-sky-300 
+                     border-b border-gray-300 transition-all duration-200 ${
+                       headerBlur ? 'shadow-lg' : ''
+                     }`}>
+    <div className="relative">
+      <div className="h-8 w-8 rounded-2xl bg-gradient-to-br from-sky-300 via-sky-400 to-sky-500 
+                      shadow-lg flex items-center justify-center">
+        <SparkleIcon className="w-4 h-4 text-white" />
+      </div>
+      <div className="absolute -right-1 -bottom-1 h-3 w-3 rounded-full 
+                      bg-gradient-to-r from-emerald-400 to-emerald-500 
+                      ring-2 ring-white shadow-sm animate-pulse-slow"
+           title="Online" />
+    </div>
+    <div className="min-w-0 flex-1">
+      <h1 className="text-lg font-semibold tracking-tight text-gray-900 font-sans">
+        Complaint Letter Assistant
+      </h1>
+    </div>
+  </header>
+
+      {/* Messages area - takes remaining space */}
       <div 
         ref={scrollerRef} 
-        className="flex-1 overflow-y-auto p-4 space-y-2"
-        style={{ minHeight: 0 }}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto p-4 space-y-2 bg-gradient-to-br from-white via-sky-50 to-sky-100 scrollbar-thin scrollbar-thumb-sky-200 scrollbar-track-transparent"
+        style={{ 
+          minHeight: 0,
+          overscrollBehavior: 'contain'
+        }}
       >
         {messages.length === 0 && (
           <div className="flex items-center justify-center h-full">
-            <div className="text-center max-w-md mx-auto px-4">
-              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-sky-50 to-sky-100 flex items-center justify-center mx-auto mb-4">
-                <SparkleIcon className="w-8 h-8 text-sky-500" />
+            <div className="text-center max-w-md mx-auto px-4 animate-fade-in">
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-sky-300 via-sky-400 to-sky-500 flex items-center justify-center mx-auto mb-4 shadow-lg animate-float">
+                <SparkleIcon className="w-8 h-8 text-white" />
               </div>
               <h2 className="text-lg font-semibold text-gray-900 mb-2">Start Your Complaint</h2>
               <p className="text-gray-600 text-sm leading-relaxed">
@@ -585,13 +862,14 @@ export default function Chat() {
           }
 
           return (
-            <div key={i} className={`flex mb-4 ${isUser ? 'justify-end' : 'justify-start'}`}>
+            <div key={i} className={`flex mb-4 animate-slide-in ${isUser ? 'justify-end' : 'justify-start'}`} 
+                 style={{ animationDelay: `${i * 100}ms` }}>
               <div
                 className={[
-                  'max-w-[85%] px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap shadow-lg backdrop-blur-sm',
+                  'max-w-[85%] px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap shadow-lg backdrop-blur-sm transition-all duration-200 hover:shadow-xl',
                   isUser
-                    ? 'bg-gradient-to-r from-sky-300 to-sky-400 text-white rounded-br-md'
-                    : 'bg-white/80 text-gray-800 rounded-bl-md border border-gray-200/50'
+                    ? 'bg-gradient-to-r from-sky-300 to-sky-400 text-white rounded-br-md hover:from-sky-400 hover:to-sky-500 transform hover:scale-[1.02]'
+                    : 'bg-white/80 text-gray-800 rounded-bl-md border border-gray-200/50 hover:bg-white/90 hover:border-gray-300/50 transform hover:scale-[1.02]'
                 ].join(' ')}
               >
                 <div className="whitespace-pre-wrap">{m.content}</div>
@@ -601,25 +879,28 @@ export default function Chat() {
         })}
 
         {isStreaming && (
-          <div className="mb-4 flex justify-start">
-            <div className="bg-white/80 text-gray-800 rounded-2xl rounded-bl-md px-4 py-3 border border-gray-200/50 shadow-lg backdrop-blur-sm">
+          <div className="mb-4 flex justify-start animate-slide-in">
+            <div className="bg-white/90 text-gray-800 rounded-2xl rounded-bl-md px-4 py-3 border border-gray-200/50 shadow-lg backdrop-blur-sm">
               <TypingDots />
             </div>
           </div>
         )}
 
         {isTranscribing && !isStreaming && (
-          <div className="mb-4 flex justify-start">
-            <div className="bg-white/80 text-gray-800 rounded-2xl rounded-bl-md px-4 py-3 border border-gray-200/50 shadow-lg backdrop-blur-sm">
-              <span className="text-sky-600">🎙️ Transcribing audio...</span>
+          <div className="mb-4 flex justify-start animate-slide-in">
+            <div className="bg-white/90 text-gray-800 rounded-2xl rounded-bl-md px-4 py-3 border border-gray-200/50 shadow-lg backdrop-blur-sm">
+              <span className="text-sky-600 flex items-center gap-2">
+                <span className="animate-pulse">🎙️</span> 
+                Transcribing audio...
+              </span>
             </div>
           </div>
         )}
       </div>
 
       {/* Input area - Polished WhatsApp-style with optimized padding */}
-      <div className="bg-white/80 backdrop-blur-xl border-t border-gray-200/50 shadow-2xl p-3 safe-area-inset-bottom">
-        <div className="bg-white/80 backdrop-blur-xl rounded-3xl border border-gray-200/50 shadow-2xl p-2">
+      <div className="flex-shrink-0 bg-white/80 border-t border-gray-200/50 shadow-2xl p-3 safe-area-inset-bottom">
+        <div className="bg-white/90 rounded-3xl border border-gray-200/50 shadow-2xl p-2 hover:shadow-3xl transition-all duration-200">
           <div className="flex items-center gap-2">
             {/* Draft letter button - now on the left */}
             <button
@@ -630,12 +911,14 @@ export default function Chat() {
                 'bg-gradient-to-r from-sky-300 via-sky-400 to-sky-500 text-white',
                 'hover:from-sky-400 hover:via-sky-500 hover:to-sky-600',
                 'disabled:opacity-50 disabled:cursor-not-allowed',
+                'focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2',
+                'active:scale-95 hover:scale-105 hover:shadow-xl',
                 // Mobile: just pen icon (circular)
                 'w-11 rounded-2xl sm:w-auto sm:px-5 sm:gap-2 sm:rounded-2xl'
               ].join(' ')}
               title="Generate a formal complaint letter"
             >
-              <PenIcon className="w-4 h-4" />
+              <PenIcon className="w-4 h-4 transition-transform duration-200 group-hover:rotate-12" />
               <span className="hidden sm:inline font-medium text-sm">Draft Letter</span>
             </button>
 
@@ -648,7 +931,7 @@ export default function Chat() {
                 onKeyDown={onKeyDown}
                 placeholder="Describe your housing issue..."
                 rows={1}
-                className="w-full border border-gray-200/70 bg-white/70 rounded-2xl px-4 text-sm outline-none focus:ring-2 focus:ring-sky-200 focus:border-sky-300 transition-all duration-200 backdrop-blur-sm resize-none leading-5 h-11 max-h-24 flex items-center"
+                className="w-full border border-gray-200/70 bg-white/80 rounded-2xl px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300 focus:border-sky-400 transition-all duration-200 backdrop-blur-sm resize-none leading-5 h-11 max-h-24 flex items-center hover:bg-white/90 hover:border-gray-300/70"
                 style={{ 
                   scrollbarWidth: 'thin',
                   scrollbarColor: '#cbd5e0 transparent',
@@ -656,38 +939,56 @@ export default function Chat() {
                   paddingBottom: '10px'
                 }}
               />
+              {/* Character counter */}
+              {input.length > 100 && (
+                <div className="absolute -top-6 right-2 text-xs text-gray-400 animate-fade-in">
+                  {input.length}/1000
+                </div>
+              )}
             </div>
 
-            {/* Context-sensitive button - Mic when empty, Send when typing (WhatsApp style) */}
-            {input.trim() ? (
-              <button
-                onClick={send}
-                disabled={isStreaming || isSending}
-                className="w-11 h-11 rounded-2xl bg-gradient-to-r from-sky-300 to-sky-400 text-white flex items-center justify-center transition-all duration-200 hover:shadow-lg disabled:opacity-50 flex-shrink-0"
-                title="Send message"
-              >
-                <SendIcon className="w-4 h-4" />
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={isRecording ? () => { stopRecording(); } : startRecording}
-                disabled={isStreaming || isSending}
-                aria-label={isRecording ? 'Stop recording' : 'Start recording'}
-                className={[
-                  'relative w-11 h-11 rounded-2xl border transition-all duration-200 shadow-lg flex-shrink-0',
-                  isRecording
-                    ? 'bg-gradient-to-r from-red-500 to-pink-600 border-red-500 text-white shadow-red-200 scale-110'
-                    : 'bg-white border-gray-200 text-sky-600 hover:bg-sky-50 hover:border-sky-200'
-                ].join(' ')}
-                title={isRecording ? 'Stop recording' : 'Start recording'}
-              >
-                <MicIcon className="w-4 h-4 mx-auto" />
-                {isRecording && (
-                  <div className="absolute inset-0 rounded-2xl bg-red-400/20 animate-pulse" />
-                )}
-              </button>
-            )}
+{/* Context-sensitive button – mic always visible while recording */}
+{isRecording ? (
+  // Show STOP MIC while recording, regardless of input contents
+  <button
+    type="button"
+    onClick={() => { stopRecording(); }}
+    disabled={isStreaming || isSending}
+    aria-label="Stop recording"
+    className="relative w-11 h-11 rounded-2xl border transition-all duration-200 shadow-lg flex-shrink-0
+               bg-gradient-to-r from-red-500 to-pink-600 border-red-500 text-white hover:shadow-xl scale-110 animate-pulse-subtle
+               focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-2"
+    title="Stop recording"
+  >
+    <MicIcon className="w-4 h-4 mx-auto" />
+    <div className="absolute inset-0 rounded-2xl bg-red-400/30 animate-ping" />
+  </button>
+) : input.trim() ? (
+  // Not recording: show SEND when there is text
+  <button
+    onClick={send}
+    disabled={isStreaming || isSending}
+    className="w-11 h-11 rounded-2xl bg-gradient-to-r from-sky-300 to-sky-400 text-white flex items-center justify-center transition-all duration-200 hover:shadow-xl disabled:opacity-50 flex-shrink-0 hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2"
+    title="Send message"
+  >
+    <SendIcon className="w-4 h-4 transition-transform duration-200 hover:translate-x-0.5" />
+  </button>
+) : (
+  // Not recording + empty: show START MIC
+  <button
+    type="button"
+    onClick={startRecording}
+    disabled={isStreaming || isSending}
+    aria-label="Start recording"
+    className="relative w-11 h-11 rounded-2xl border transition-all duration-200 shadow-lg flex-shrink-0
+               bg-white border-gray-200 text-sky-600 hover:bg-sky-50 hover:border-sky-200 hover:scale-105 active:scale-95
+               focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2"
+    title="Start recording"
+  >
+    <MicIcon className="w-4 h-4 mx-auto transition-transform duration-200 hover:scale-110" />
+  </button>
+)}
+
           </div>
         </div>
       </div>
