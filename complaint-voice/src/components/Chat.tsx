@@ -204,8 +204,17 @@ const renderHeader = (text: string, level: number, key: string) => {
     3: 'text-base',
   };
   const cls = `${sizes[level] || 'text-base'} font-bold text-gray-900 mt-3 mb-1`;
-  const Tag = (`h${Math.min(3, Math.max(1, level))}` as keyof JSX.IntrinsicElements);
-  return <Tag key={key} className={cls}>{renderInline(text, key)}</Tag>;
+  
+  // Use createElement instead of JSX.IntrinsicElements
+  const tagName = `h${Math.min(3, Math.max(1, level))}`;
+  
+  if (tagName === 'h1') {
+    return <h1 key={key} className={cls}>{renderInline(text, key)}</h1>;
+  } else if (tagName === 'h2') {
+    return <h2 key={key} className={cls}>{renderInline(text, key)}</h2>;
+  } else {
+    return <h3 key={key} className={cls}>{renderInline(text, key)}</h3>;
+  }
 };
 
 const renderParagraph = (text: string, key: string) => (
