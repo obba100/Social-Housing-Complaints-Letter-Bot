@@ -125,6 +125,7 @@ const CopyButton: React.FC<{
 /* -------- Improved Markdown renderer (bold + italics + simple lists/headings) -------- */
 
 const renderInline = (s: string, keyBase: string) => {
+  // Split on bold first, keep delimiters
   const boldParts = s.split(/(\*\*[^*]+\*\*)/g);
 
   return boldParts.map((bp, bi) => {
@@ -137,6 +138,7 @@ const renderInline = (s: string, keyBase: string) => {
       );
     }
 
+    // Inside non-bold segments, support italics with *...* or _..._
     const italicParts = bp.split(/(\*[^*]+\*|_[^_]+_)/g);
     return italicParts.map((ip, ii) => {
       const iMatch = ip.match(/^\*(.+)\*$/) || ip.match(/^_(.+)_$/);
@@ -147,6 +149,7 @@ const renderInline = (s: string, keyBase: string) => {
           </em>
         );
       }
+      // Handle explicit line breaks within inline segments
       const withBreaks = ip.split(/ {2,}\n|\\n/g);
       return withBreaks.map((chunk, ci) =>
         ci < withBreaks.length - 1 ? (
@@ -196,10 +199,16 @@ const renderHeader = (text: string, level: number, key: string) => {
     3: 'text-base',
   };
   const cls = `${sizes[level] || 'text-base'} font-bold text-gray-900 mt-3 mb-1`;
+  
   const tagName = `h${Math.min(3, Math.max(1, level))}`;
-  if (tagName === 'h1') return <h1 key={key} className={cls}>{renderInline(text, key)}</h1>;
-  if (tagName === 'h2') return <h2 key={key} className={cls}>{renderInline(text, key)}</h2>;
-  return <h3 key={key} className={cls}>{renderInline(text, key)}</h3>;
+  
+  if (tagName === 'h1') {
+    return <h1 key={key} className={cls}>{renderInline(text, key)}</h1>;
+  } else if (tagName === 'h2') {
+    return <h2 key={key} className={cls}>{renderInline(text, key)}</h2>;
+  } else {
+    return <h3 key={key} className={cls}>{renderInline(text, key)}</h3>;
+  }
 };
 
 const renderParagraph = (text: string, key: string) => (
@@ -210,15 +219,36 @@ const renderParagraph = (text: string, key: string) => (
 
 function renderMarkdown(md: string): React.ReactNode {
   if (!md) return null;
+
   const lines = md.replace(/\r\n/g, '\n').split('\n');
   const out: React.ReactNode[] = [];
+
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
-    if (/^\s*$/.test(line)) { i += 1; continue; }
+
+    // Skip pure empty lines (they end paragraphs)
+    if (/^\s*$/.test(line)) {
+      i += 1;
+      continue;
+    }
+
+    // Headings: #, ##, ###
     const h = line.match(/^(#{1,3})\s+(.*)$/);
-    if (h) { out.push(renderHeader(h[2].trim(), h[1].length, `h-${i}`)); i += 1; continue; }
-    if (/^[-_]{3,}\s*$/.test(line)) { out.push(<hr key={`hr-${i}`} className="my-3 border-amber-200/70" />); i += 1; continue; }
+    if (h) {
+      out.push(renderHeader(h[2].trim(), h[1].length, `h-${i}`));
+      i += 1;
+      continue;
+    }
+
+    // Horizontal rule (--- or ___)
+    if (/^[-_]{3,}\s*$/.test(line)) {
+      out.push(<hr key={`hr-${i}`} className="my-3 border-amber-200/70" />);
+      i += 1;
+      continue;
+    }
+
+    // Lists (unordered)
     const ulMatch = line.match(/^\s*[-*]\s+(.+)$/);
     if (ulMatch) {
       const items: { text: string }[] = [];
@@ -231,6 +261,8 @@ function renderMarkdown(md: string): React.ReactNode {
       out.push(renderList(items, false, `ul-${i}-${items.length}`));
       continue;
     }
+
+    // Lists (ordered)
     const olMatch = line.match(/^\s*\d+\.\s+(.+)$/);
     if (olMatch) {
       const items: { text: string }[] = [];
@@ -243,6 +275,8 @@ function renderMarkdown(md: string): React.ReactNode {
       out.push(renderList(items, true, `ol-${i}-${items.length}`));
       continue;
     }
+
+    // Paragraph: accumulate until blank line or block boundary
     const para: string[] = [line];
     i += 1;
     while (
@@ -258,6 +292,7 @@ function renderMarkdown(md: string): React.ReactNode {
     }
     out.push(renderParagraph(para.join('\n'), `p-${i}`));
   }
+
   return <>{out}</>;
 }
 
@@ -317,9 +352,8 @@ export default function Chat() {
   // Scroll state
   const [headerBlur, setHeaderBlur] = useState(false);
 
-  // Device detection
-  const [isAndroid, setIsAndroid] = useState(false);
-  const [isMobile, setIsMobile] = useState(false); // phones or small screens
+  // Device detection (for keyboard suppression decisions)
+  const [isMobile, setIsMobile] = useState(false);
 
   // Refs
   const recognitionRef = useRef<AnySR | null>(null);
@@ -333,70 +367,28 @@ export default function Chat() {
   const interimTextRef = useRef('');             // latest interim words for overlay/commit-on-stop
   const rafUpdateRef = useRef<number | null>(null);
 
-  // Dedup guards for Android
+  // Dedup guards
   const seenFinalsRef = useRef<Set<string>>(new Set());
+  const lastFinalAtRef = useRef<number>(0);
 
   // UI for listening status and speed
   const [listeningBadge, setListeningBadge] = useState<'idle' | 'starting' | 'listening'>('idle');
   const [micReady, setMicReady] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
-  const interimKickRef = useRef<number | null>(null);
 
-  // Optional live overlay toggle
-  const [liveMode] = useState(true);
+  // Auto-restart controls
+  const autoRestartRef = useRef(false);
+  const restartWindowRef = useRef<number>(0);
+  const restartCountRef = useRef(0);
+
+  // Track current recogniser generation to ignore stale events
+  const recGenRef = useRef(0);
 
   // Tiny “speaking” pulse on the mic
   const [audioActive, setAudioActive] = useState(false);
 
   // Last-word protection
   const settleTimerRef = useRef<number | null>(null);
-  const promoteInterimToFinal = () => {
-    const tail = (interimTextRef.current || '').trim();
-    if (!tail) return;
-    committedTextRef.current = normalise(committedTextRef.current + ' ' + tail);
-    interimTextRef.current = '';
-    setInput(committedTextRef.current);
-  };
-
-  // Normaliser
-  const normalise = (s: string) => s.replace(/\s+/g, ' ').trim();
-
-  // Android-safe append that avoids loops/duplicates
-  const appendFinalChunk = (raw: string) => {
-    const chunk = normalise(raw);
-    if (!chunk) return;
-
-    // Skip exact repeats
-    if (seenFinalsRef.current.has(chunk)) return;
-
-    const current = committedTextRef.current;
-    if (!current) {
-      committedTextRef.current = chunk;
-      setInput(committedTextRef.current);
-      seenFinalsRef.current.add(chunk);
-      return;
-    }
-
-    // If engine re-sends a previous sentence, ignore it
-    if (current.endsWith(chunk) || current.includes(' ' + chunk + ' ')) {
-      seenFinalsRef.current.add(chunk);
-      return;
-    }
-
-    // Overlap guard: if chunk begins with the tail of current, only add the non-overlapping part
-    const tailLen = Math.min(80, current.length);
-    const tail = current.slice(-tailLen);
-    if (chunk.startsWith(tail)) {
-      const addition = normalise(chunk.slice(tail.length));
-      if (!addition) { seenFinalsRef.current.add(chunk); return; }
-      committedTextRef.current = normalise(current + ' ' + addition);
-    } else {
-      committedTextRef.current = normalise(current + ' ' + chunk);
-    }
-
-    setInput(committedTextRef.current);
-    seenFinalsRef.current.add(chunk);
-  };
 
   // Add custom styles for animations
   React.useEffect(() => {
@@ -430,7 +422,6 @@ export default function Chat() {
   // Device detection
   useEffect(() => {
     const ua = navigator.userAgent || '';
-    setIsAndroid(/Android/i.test(ua));
     const isMobileUA = /Android|iPhone|iPad|iPod/i.test(ua);
     const isSmallScreen = window.innerWidth < 640;
     setIsMobile(isMobileUA || isSmallScreen);
@@ -460,15 +451,16 @@ export default function Chat() {
   }, [headerBlur]);
 
   useEffect(() => {
+    // Focus and adjust height when input changes
     if (inputRef.current) {
-      inputRef.current.focus();
+      if (!isRecording) inputRef.current.focus();
       if (!input) {
         inputRef.current.style.height = 'auto';
       } else {
         adjustTextareaHeight(inputRef.current);
       }
     }
-  }, [input]);
+  }, [input, isRecording]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -478,17 +470,54 @@ export default function Chat() {
     scrollToBottom();
   }, [messages, isStreaming, scrollToBottom]);
 
-  // SR instance init only
-  useEffect(() => {
-    const SR = window.webkitSpeechRecognition || window.SpeechRecognition;
-    if (!SR) return;
-    const rec = new SR();
-    rec.lang = 'en-GB';
-    rec.continuous = true;     // enable continuous dictation
-    rec.interimResults = true; // show partials (but keep them out of the textbox)
-    rec.maxAlternatives = 1;
-    recognitionRef.current = rec;
-  }, []);
+  const normalise = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+  const promoteInterimToFinal = () => {
+    const tail = (interimTextRef.current || '').trim();
+    if (!tail) return;
+    committedTextRef.current = normalise(committedTextRef.current + ' ' + tail);
+    interimTextRef.current = '';
+    setInput(committedTextRef.current);
+    lastFinalAtRef.current = Date.now();
+  };
+
+  const appendFinalChunk = (raw: string) => {
+    const chunk = normalise(raw);
+    if (!chunk) return;
+
+    // Deduplicate exact repeats
+    if (seenFinalsRef.current.has(chunk)) return;
+
+    const current = committedTextRef.current;
+    if (!current) {
+      committedTextRef.current = chunk;
+      setInput(committedTextRef.current);
+      seenFinalsRef.current.add(chunk);
+      lastFinalAtRef.current = Date.now();
+      return;
+    }
+
+    // If engine re-sends a previous sentence, ignore it
+    if (current.endsWith(chunk) || current.includes(' ' + chunk + ' ')) {
+      seenFinalsRef.current.add(chunk);
+      return;
+    }
+
+    // Overlap guard: if chunk begins with the tail of current, only add the non-overlapping part
+    const tailLen = Math.min(80, current.length);
+    const tail = current.slice(-tailLen);
+    if (chunk.startsWith(tail)) {
+      const addition = normalise(chunk.slice(tail.length));
+      if (!addition) { seenFinalsRef.current.add(chunk); return; }
+      committedTextRef.current = normalise(current + ' ' + addition);
+    } else {
+      committedTextRef.current = normalise(current + ' ' + chunk);
+    }
+
+    setInput(committedTextRef.current);
+    seenFinalsRef.current.add(chunk);
+    lastFinalAtRef.current = Date.now();
+  };
 
   const ensureMicPermission = async () => {
     if (micReady) return true;
@@ -502,19 +531,150 @@ export default function Chat() {
     }
   };
 
-  // Start continuous recording with overlay and auto-restart
+  // Create a fresh recogniser instance and start it
+  const createRecognizerAndStart = (initial: boolean) => {
+    const SR = window.webkitSpeechRecognition || window.SpeechRecognition;
+    if (!SR) return 'fallback';
+
+    const thisGen = ++recGenRef.current;
+    const rec = new SR();
+
+    rec.lang = 'en-GB';
+    rec.interimResults = true;
+    rec.maxAlternatives = 1;
+    rec.continuous = true; // iOS may ignore; Android usually honours
+
+    recognitionRef.current = rec;
+
+    rec.onstart = () => {
+      if (thisGen !== recGenRef.current) return; // stale
+      if (initial) {
+        setIsRecording(true);
+        setIsStarting(false);
+        setListeningBadge('listening');
+
+        // Reset buffers on actual start to capture first words
+        committedTextRef.current = input.trim();
+        interimTextRef.current = '';
+        seenFinalsRef.current.clear();
+        lastFinalAtRef.current = 0;
+
+        // Suppress mobile keyboard during recording
+        if (isMobile && inputRef.current) {
+          inputRef.current.blur();
+        }
+      }
+    };
+
+    rec.onaudiostart = () => { if (thisGen === recGenRef.current) setAudioActive(true); };
+    rec.onaudioend = () => { if (thisGen === recGenRef.current) setAudioActive(false); };
+
+    rec.onspeechend = () => {
+      if (thisGen !== recGenRef.current) return;
+      if (settleTimerRef.current) window.clearTimeout(settleTimerRef.current);
+      settleTimerRef.current = window.setTimeout(() => {
+        if (isRecording) promoteInterimToFinal();
+      }, 250);
+    };
+
+    rec.onresult = (e: any) => {
+      if (thisGen !== recGenRef.current) return;
+
+      let finalChunk = '';
+      let interimChunk = '';
+
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const result = e.results[i];
+        const transcript = result[0]?.transcript ?? '';
+        if (result.isFinal) finalChunk += transcript + ' ';
+        else interimChunk += transcript + ' ';
+      }
+
+      if (finalChunk) {
+        appendFinalChunk(finalChunk);
+      }
+
+      interimTextRef.current = interimChunk.trim();
+
+      if (settleTimerRef.current) window.clearTimeout(settleTimerRef.current);
+      settleTimerRef.current = window.setTimeout(() => {
+        if (isRecording) promoteInterimToFinal();
+      }, 450);
+
+      if (rafUpdateRef.current) cancelAnimationFrame(rafUpdateRef.current);
+      rafUpdateRef.current = requestAnimationFrame(() => {});
+    };
+
+    rec.onerror = (e: any) => {
+      if (thisGen !== recGenRef.current) return;
+      // Ignore benign cases; let onend handle restart
+      if (e?.error === 'aborted') return;
+      if (e?.error === 'no-speech') return;
+      if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') {
+        setIsRecording(false);
+        setIsStarting(false);
+        setListeningBadge('idle');
+        autoRestartRef.current = false;
+      }
+    };
+
+    rec.onend = () => {
+      if (thisGen !== recGenRef.current) return;
+
+      promoteInterimToFinal();
+      if (settleTimerRef.current) {
+        window.clearTimeout(settleTimerRef.current);
+        settleTimerRef.current = null;
+      }
+
+      // Auto-restart while user expects recording
+      if (autoRestartRef.current && isRecording && !isSending) {
+        const now = Date.now();
+        // Sliding window to avoid fast loops
+        if (now - restartWindowRef.current > 6000) {
+          restartWindowRef.current = now;
+          restartCountRef.current = 0;
+        }
+        restartCountRef.current += 1;
+
+        const hadRecentFinal = lastFinalAtRef.current && now - lastFinalAtRef.current < 1200;
+        const baseDelay = 450; // gentle on both Android and iOS
+        const backoff = Math.min(2000, restartCountRef.current * 250);
+        const delay = baseDelay + backoff + (hadRecentFinal ? 120 : 0);
+
+        setTimeout(() => {
+          if (autoRestartRef.current && isRecording) {
+            createRecognizerAndStart(false);
+          }
+        }, delay);
+      } else {
+        setListeningBadge('idle');
+      }
+    };
+
+    try {
+      rec.start();
+    } catch {
+      // swallow; onerror/onend will manage state
+    }
+
+    return 'ok';
+  };
+
   const startRecording = async () => {
     if (isStarting || isRecording || isSending) return;
     setIsStarting(true);
     setListeningBadge('starting');
 
-    const rec = recognitionRef.current;
+    autoRestartRef.current = true;
 
-    // Fallback if SR not available
-    if (!rec) {
+    const ok = await ensureMicPermission();
+    if (!ok) { setIsStarting(false); setListeningBadge('idle'); return; }
+
+    const status = createRecognizerAndStart(true);
+    if (status === 'fallback') {
+      // Web Speech not available: fallback to MediaRecorder -> /api/transcribe on stop
       try {
-        const ok = await ensureMicPermission();
-        if (!ok) { setIsStarting(false); setListeningBadge('idle'); return; }
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const mr = new MediaRecorder(stream);
         chunksRef.current = [];
@@ -542,133 +702,33 @@ export default function Chat() {
         setIsRecording(true);
         setIsStarting(false);
         setListeningBadge('listening');
+        if (isMobile && inputRef.current) inputRef.current.blur(); // hide keyboard during fallback record too
       } catch {
         setIsStarting(false);
         setListeningBadge('idle');
       }
-      return;
-    }
-
-    const ok = await ensureMicPermission();
-    if (!ok) { setIsStarting(false); setListeningBadge('idle'); return; }
-
-    // Fresh handlers for this run
-    rec.onstart = () => {
-      setIsRecording(true);
-      setIsStarting(false);
-      setListeningBadge('listening');
-
-      // Reset buffers on actual start to capture first words
-      committedTextRef.current = input.trim();
-      interimTextRef.current = '';
-      seenFinalsRef.current.clear(); // reset dedupe on fresh start
-
-      // kick hint if no interim quickly
-      if (interimKickRef.current) window.clearTimeout(interimKickRef.current);
-      interimKickRef.current = window.setTimeout(() => {}, 400);
-    };
-
-    rec.onaudiostart = () => setAudioActive(true);
-    rec.onaudioend = () => setAudioActive(false);
-
-    // Settle quicker when silence detected
-    rec.onspeechend = () => {
-      if (settleTimerRef.current) window.clearTimeout(settleTimerRef.current);
-      settleTimerRef.current = window.setTimeout(() => {
-        if (isRecording) promoteInterimToFinal();
-      }, 250);
-    };
-
-    rec.onresult = (e: any) => {
-      let finalChunk = '';
-      let interimChunk = '';
-
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const result = e.results[i];
-        const transcript = result[0]?.transcript ?? '';
-        if (result.isFinal) finalChunk += transcript + ' ';
-        else interimChunk += transcript + ' ';
-      }
-
-      if (finalChunk) {
-        // Android sometimes resends old finals on restart — dedupe before append
-        appendFinalChunk(finalChunk);
-      }
-
-      interimTextRef.current = interimChunk.trim();
-
-      if (interimKickRef.current) {
-        window.clearTimeout(interimKickRef.current);
-        interimKickRef.current = null;
-      }
-
-      // restart the silence settle timer to protect the last word
-      if (settleTimerRef.current) window.clearTimeout(settleTimerRef.current);
-      settleTimerRef.current = window.setTimeout(() => {
-        if (isRecording) promoteInterimToFinal();
-      }, 450);
-
-      // paint next frame for overlay (keeps overlay snappy)
-      if (rafUpdateRef.current) cancelAnimationFrame(rafUpdateRef.current);
-      rafUpdateRef.current = requestAnimationFrame(() => {});
-    };
-
-    rec.onerror = (e: any) => {
-      if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') {
-        setIsRecording(false);
-        setIsStarting(false);
-        setListeningBadge('idle');
-      }
-      // Soft errors handled by onend
-    };
-
-    rec.onend = () => {
-      // Flush any stranded interim so the last word is not lost
-      promoteInterimToFinal();
-      if (settleTimerRef.current) {
-        window.clearTimeout(settleTimerRef.current);
-        settleTimerRef.current = null;
-      }
-
-      // Auto-restart while user expects recording
-      if (isRecording && !isSending) {
-        const delay = isAndroid ? 400 : 120; // gentler restart on Android
-        setTimeout(() => {
-          try { rec.start(); } catch {}
-        }, delay);
-      } else {
-        setListeningBadge('idle');
-      }
-    };
-
-    try {
-      // Abort any ghost session then start
-      try { (rec as any).abort?.(); } catch {}
-      rec.start();
-    } catch {
-      setIsStarting(false);
-      setListeningBadge('idle');
     }
   };
 
   const stopRecording = () => new Promise<void>((resolve) => {
+    autoRestartRef.current = false; // prevent onend restarts
     setIsRecording(false);
     setIsStarting(false);
     voiceSessionRef.current += 1; // Invalidate current session
     setListeningBadge('idle');
 
-    // Give the engine a short grace period to deliver a final result
     const GRACE = 200;
     const finish = () => {
-      // Commit any leftover interim so nothing is lost
       promoteInterimToFinal();
 
-      if (recognitionRef.current) {
-        const rec: AnySR = recognitionRef.current;
+      const rec = recognitionRef.current;
+      if (rec) {
+        // Detach handlers and stop, then drop instance to avoid stale replays
         rec.onresult = null;
         rec.onerror = null;
         rec.onend = null;
         try { rec.stop(); } catch {}
+        recognitionRef.current = null;
       }
       resolve();
     };
@@ -678,7 +738,6 @@ export default function Chat() {
       return;
     }
 
-    // Fallback MediaRecorder stop
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.addEventListener('stop', () => resolve(), { once: true });
       mediaRecorderRef.current.stop();
@@ -717,7 +776,10 @@ export default function Chat() {
     setMessages(nextMessages);
     setInput('');
     
-    if (inputRef.current) inputRef.current.style.height = 'auto';
+    if (inputRef.current) {
+      inputRef.current.style.height = 'auto';
+    }
+    
     setIsStreaming(true);
 
     const holderIndex = nextMessages.length;
@@ -871,6 +933,7 @@ export default function Chat() {
 
   const LetterBubble: React.FC<{ title: string; text: string; md?: string; index: number }> = ({ title, text, md, index }) => {
     const contentId = `letter-content-${index}`;
+    
     return (
       <div className="mb-6 flex justify-start">
         <div className="max-w-[90%] rounded-3xl overflow-hidden border-2 border-amber-200/80 bg-gradient-to-br from-amber-50/90 via-yellow-50/80 to-orange-50/70 backdrop-blur-md shadow-2xl ring-1 ring-amber-100/60 hover-lift group">
@@ -882,13 +945,27 @@ export default function Chat() {
               <span className="text-base font-bold text-amber-900 truncate">{title}</span>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
-              <CopyButton text={text || md || ''} label="Copy Rich" variant="primary" copyFormatted={true} sourceElementId={contentId} />
-              <CopyButton text={text || md || ''} label="Copy Plain" variant="secondary" />
+              <CopyButton 
+                text={text || md || ''} 
+                label="Copy Rich" 
+                variant="primary" 
+                copyFormatted={true}
+                sourceElementId={contentId}
+              />
+              <CopyButton 
+                text={text || md || ''} 
+                label="Copy Plain" 
+                variant="secondary" 
+              />
             </div>
           </div>
           <div className="px-6 py-5 bg-gradient-to-b from-yellow-50/80 to-amber-50/60">
             <div id={contentId} className="whitespace-pre-wrap leading-relaxed text-gray-900 font-medium">
-              {md && md.trim() !== '' ? renderMarkdown(md) : text}
+              {md && md.trim() !== '' ? (
+                renderMarkdown(md)
+              ) : (
+                text
+              )}
             </div>
           </div>
         </div>
@@ -896,23 +973,27 @@ export default function Chat() {
     );
   };
 
-  const voiceOnly = isMobile; // on phones, hide the textbox and go edge-to-edge
-
   return (
     <div className="flex flex-col h-screen w-full max-w-full overflow-hidden 
                     bg-gradient-to-br from-gray-100 via-gray-50 to-sky-100/50 
                     rounded-t-3xl shadow-lg"
          style={{ height: '100vh', maxHeight: '100vh' }}>
 
-      {/* Header */}
+      {/* Header - dynamic blur based on scroll; no vertical padding, fixed height */}
       <header className={`flex-shrink-0 flex items-center gap-4 px-3 h-14 
                      bg-gradient-to-r from-sky-100 via-sky-200 to-sky-300 
-                     border-b border-gray-300 transition-all duration-200 ${headerBlur ? 'shadow-lg' : ''}`}>
+                     border-b border-gray-300 transition-all duration-200 ${
+                       headerBlur ? 'shadow-lg' : ''
+                     }`}>
         <div className="relative">
-          <div className="h-8 w-8 rounded-2xl bg-gradient-to-br from-sky-300 via-sky-400 to-sky-500 shadow-lg flex items-center justify-center">
+          <div className="h-8 w-8 rounded-2xl bg-gradient-to-br from-sky-300 via-sky-400 to-sky-500 
+                          shadow-lg flex items-center justify-center">
             <SparkleIcon className="w-4 h-4 text-white" />
           </div>
-          <div className="absolute -right-1 -bottom-1 h-3 w-3 rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-white shadow-sm animate-pulse-slow" title="Online" />
+          <div className="absolute -right-1 -bottom-1 h-3 w-3 rounded-full 
+                          bg-gradient-to-r from-emerald-400 to-emerald-500 
+                          ring-2 ring-white shadow-sm animate-pulse-slow"
+               title="Online" />
         </div>
         <div className="min-w-0 flex-1">
           <h1 className="text-lg font-semibold tracking-tight text-gray-900 font-sans">
@@ -921,23 +1002,25 @@ export default function Chat() {
         </div>
       </header>
 
-      {/* Messages area */}
+      {/* Messages area - takes remaining space; no top/bottom padding */}
       <div 
         ref={scrollerRef} 
         onScroll={handleScroll}
-        className={`flex-1 overflow-y-auto ${voiceOnly ? 'px-0' : 'px-4'} py-0 space-y-2 bg-gradient-to-br from-white via-sky-50 to-sky-100 scrollbar-thin scrollbar-thumb-sky-200 scrollbar-track-transparent`}
-        style={{ minHeight: 0, overscrollBehavior: 'contain' }}
+        className="flex-1 overflow-y-auto px-4 py-0 space-y-2 bg-gradient-to-br from-white via-sky-50 to-sky-100 scrollbar-thin scrollbar-thumb-sky-200 scrollbar-track-transparent"
+        style={{ 
+          minHeight: 0,
+          overscrollBehavior: 'contain'
+        }}
       >
         {messages.length === 0 && (
           <div className="flex items-center justify-center h-full">
-            <div className={`text-center max-w-md mx-auto ${voiceOnly ? 'px-3' : 'px-4'} animate-fade-in`}>
+            <div className="text-center max-w-md mx-auto px-4 animate-fade-in">
               <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-sky-300 via-sky-400 to-sky-500 flex items-center justify-center mx-auto mb-4 shadow-lg animate-float">
                 <SparkleIcon className="w-8 h-8 text-white" />
               </div>
               <h2 className="text-lg font-semibold text-gray-900 mb-2">Start Your Complaint</h2>
               <p className="text-gray-600 text-sm leading-relaxed">
-                {voiceOnly ? 'Tap the mic and speak. We will capture your words and you can send or draft when ready.' :
-                  'Describe your housing issue, or use the mic to speak. Include dates, who you contacted, and what resolution you\'re seeking.'}
+                Describe your housing issue, or use the mic to speak. Include dates, who you contacted, and what resolution you're seeking.
               </p>
             </div>
           </div>
@@ -956,7 +1039,8 @@ export default function Chat() {
           }
 
           return (
-            <div key={i} className={`flex mb-4 animate-slide-in ${isUser ? 'justify-end' : 'justify-start'}`} style={{ animationDelay: `${i * 100}ms` }}>
+            <div key={i} className={`flex mb-4 animate-slide-in ${isUser ? 'justify-end' : 'justify-start'}`} 
+                 style={{ animationDelay: `${i * 100}ms` }}>
               <div
                 className={[
                   'max-w-[85%] px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap shadow-lg backdrop-blur-sm transition-all duration-200 hover:shadow-xl',
@@ -991,54 +1075,104 @@ export default function Chat() {
         )}
       </div>
 
-      {/* Bottom action area */}
-      {voiceOnly ? (
-        // Mobile / Android: edge-to-edge, no textarea
-        <div className="flex-shrink-0 bg-white border-t border-gray-200 shadow-2xl px-0 pb-[max(env(safe-area-inset-bottom),12px)]">
-          {/* Live transcript line (lightweight) */}
-          {(isRecording || input.trim()) && (
-            <div className="px-4 py-2 text-sm text-gray-700">
-              <span className="whitespace-pre-wrap">
-                {input}{interimTextRef.current ? (' ' + interimTextRef.current) : ''}
-              </span>
-            </div>
-          )}
-          {/* Full-width buttons */}
-          <div className="grid grid-cols-3 divide-x divide-gray-200">
-            {/* Draft */}
+      {/* Input area - Polished WhatsApp-style, keyboard suppressed while recording */}
+      <div className="flex-shrink-0 bg-white/80 border-t border-gray-200/50 shadow-2xl px-3 pb-3 safe-area-inset-bottom">
+        <div className="bg-white/90 rounded-3xl border border-gray-200/50 shadow-2xl p-2 hover:shadow-3xl transition-all duration-200">
+          <div className="flex items-center gap-2">
+            {/* Draft letter button */}
             <button
               onClick={writeLetter}
               disabled={isStreaming || isSending}
-              className="h-12 w-full flex items-center justify-center text-sm font-medium bg-gradient-to-r from-sky-300 via-sky-400 to-sky-500 text-white active:scale-95 disabled:opacity-50"
-              title="Draft Letter"
+              className={[
+                'h-11 transition-all duration-200 shadow-lg flex-shrink-0 flex items-center justify-center',
+                'bg-gradient-to-r from-sky-300 via-sky-400 to-sky-500 text-white',
+                'hover:from-sky-400 hover:via-sky-500 hover:to-sky-600',
+                'disabled:opacity-50 disabled:cursor-not-allowed',
+                'focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2',
+                'active:scale-95 hover:scale-105 hover:shadow-xl',
+                'w-11 rounded-2xl sm:w-auto sm:px-5 sm:gap-2 sm:rounded-2xl'
+              ].join(' ')}
+              title="Generate a formal complaint letter"
             >
-              <PenIcon className="w-4 h-4 mr-2" /> Draft
+              <PenIcon className="w-4 h-4 transition-transform duration-200 group-hover:rotate-12" />
+              <span className="hidden sm:inline font-medium text-sm">Draft Letter</span>
             </button>
 
-            {/* Send */}
-            <button
-              onClick={send}
-              disabled={isStreaming || isSending || !input.trim()}
-              className="h-12 w-full flex items-center justify-center text-sm font-medium bg-sky-600 text-white active:scale-95 disabled:bg-gray-200 disabled:text-gray-400"
-              title="Send"
-            >
-              <SendIcon className="w-4 h-4 mr-2" /> Send
-            </button>
+            {/* Input field with live overlay; suppress keyboard while recording */}
+            <div className="flex-1 relative">
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={handleInputChange}
+                onKeyDown={onKeyDown}
+                placeholder={listeningBadge === 'listening' ? 'Listening… speak clearly' : 'Describe your housing issue...'}
+                rows={1}
+                readOnly={isRecording}           // prevent edits while recording
+                inputMode={isRecording ? 'none' : undefined} // suppress virtual keyboard on mobile
+                className="w-full border border-gray-200/70 bg-white/80 rounded-2xl px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300 focus:border-sky-400 transition-all duration-200 backdrop-blur-sm resize-none leading-5 h-11 max-h-24 flex items-center hover:bg-white/90 hover:border-gray-300/70"
+                style={{ 
+                  scrollbarWidth: 'thin',
+                  scrollbarColor: '#cbd5e0 transparent',
+                  paddingTop: '10px',
+                  paddingBottom: '10px',
+                  caretColor: isRecording ? 'transparent' as any : undefined
+                }}
+              />
 
-            {/* Mic */}
+              {/* Live overlay shows interim words instantly without rewriting the textarea */}
+              {isRecording && interimTextRef.current && (
+                <div
+                  className="pointer-events-none absolute inset-0 rounded-2xl px-4 py-2 text-sm leading-5 flex items-center"
+                  aria-hidden="true"
+                >
+                  {/* Invisible committed text to align the interim start position */}
+                  <span className="opacity-0 whitespace-pre-wrap">
+                    {input}{input ? ' ' : ''}
+                  </span>
+                  {/* Interim words rendered lightly over the textbox */}
+                  <span className="absolute left-4 right-4 top-1/2 -translate-y-1/2 text-gray-500/80 italic truncate">
+                    {interimTextRef.current}
+                  </span>
+                </div>
+              )}
+
+              {/* Small floating listening badge that does not affect layout */}
+              {listeningBadge !== 'idle' && (
+                <div className="absolute -top-6 left-2 text-xs text-sky-600">
+                  {listeningBadge === 'starting' ? 'Starting mic…' : 'Listening…'}
+                </div>
+              )}
+              {/* Character counter */}
+              {input.length > 100 && (
+                <div className="absolute -top-6 right-2 text-xs text-gray-400 animate-fade-in">
+                  {input.length}/1000
+                </div>
+              )}
+            </div>
+
+            {/* Context-sensitive button: Record/Stop when empty, Send when there is text */}
             {isRecording ? (
               <button
                 type="button"
                 onClick={() => { stopRecording(); }}
                 disabled={isStreaming || isSending}
                 aria-label="Stop recording"
-                className="relative h-12 w-full flex items-center justify-center text-sm font-medium bg-gradient-to-r from-red-500 to-pink-600 text-white active:scale-95"
-                title="Stop"
+                className="relative w-11 h-11 rounded-2xl border transition-all duration-200 shadow-lg flex-shrink-0
+                           bg-gradient-to-r from-red-500 to-pink-600 border-red-500 text-white hover:shadow-xl scale-110 animate-pulse-subtle
+                           focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-2"
+                title="Stop recording"
               >
-                <MicIcon className="w-4 h-4 mr-2" /> Stop
-                {audioActive && (
-                  <span className="absolute right-2 w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                )}
+                <MicIcon className="w-4 h-4 mx-auto" />
+                <div className="absolute inset-0 rounded-2xl bg-red-400/30 animate-ping" />
+              </button>
+            ) : input.trim() ? (
+              <button
+                onClick={send}
+                disabled={isStreaming || isSending}
+                className="w-11 h-11 rounded-2xl bg-gradient-to-r from-sky-300 to-sky-400 text-white flex items-center justify-center transition-all duration-200 hover:shadow-xl disabled:opacity-50 flex-shrink-0 hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2"
+                title="Send message"
+              >
+                <SendIcon className="w-4 h-4 transition-transform duration-200 hover:translate-x-0.5" />
               </button>
             ) : (
               <button
@@ -1046,129 +1180,18 @@ export default function Chat() {
                 onClick={startRecording}
                 disabled={isStreaming || isSending || isStarting}
                 aria-label="Start recording"
-                className={`h-12 w-full flex items-center justify-center text-sm font-medium ${isStarting ? 'bg-gray-100 text-gray-400' : 'bg-emerald-600 text-white active:scale-95'}`}
-                title="Record"
+                className={`relative w-11 h-11 rounded-2xl border transition-all duration-200 shadow-lg flex-shrink-0
+                           ${isStarting ? 'bg-gray-100 border-gray-200 text-gray-400' : 'bg-white border-gray-200 text-sky-600 hover:bg-sky-50 hover:border-sky-200 hover:scale-105 active:scale-95'}
+                           focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2`}
+                title="Start recording"
               >
-                <MicIcon className="w-4 h-4 mr-2" /> Record
+                <MicIcon className="w-4 h-4 mx-auto transition-transform duration-200" />
               </button>
             )}
+
           </div>
         </div>
-      ) : (
-        // Desktop / larger screens: original textarea + buttons
-        <div className="flex-shrink-0 bg-white/80 border-t border-gray-200/50 shadow-2xl px-3 pb-3 safe-area-inset-bottom">
-          <div className="bg-white/90 rounded-3xl border border-gray-200/50 shadow-2xl p-2 hover:shadow-3xl transition-all duration-200">
-            <div className="flex items-center gap-2">
-              {/* Draft letter button */}
-              <button
-                onClick={writeLetter}
-                disabled={isStreaming || isSending}
-                className={[
-                  'h-11 transition-all duration-200 shadow-lg flex-shrink-0 flex items-center justify-center',
-                  'bg-gradient-to-r from-sky-300 via-sky-400 to-sky-500 text-white',
-                  'hover:from-sky-400 hover:via-sky-500 hover:to-sky-600',
-                  'disabled:opacity-50 disabled:cursor-not-allowed',
-                  'focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2',
-                  'active:scale-95 hover:scale-105 hover:shadow-xl',
-                  'w-11 rounded-2xl sm:w-auto sm:px-5 sm:gap-2 sm:rounded-2xl'
-                ].join(' ')}
-                title="Generate a formal complaint letter"
-              >
-                <PenIcon className="w-4 h-4 transition-transform duration-200 group-hover:rotate-12" />
-                <span className="hidden sm:inline font-medium text-sm">Draft Letter</span>
-              </button>
-
-              {/* Input field wrapper with live overlay */}
-              <div className="flex-1 relative">
-                <textarea
-                  ref={inputRef}
-                  value={input}
-                  onChange={handleInputChange}
-                  onKeyDown={onKeyDown}
-                  placeholder={listeningBadge === 'listening' ? 'Listening… speak clearly' : 'Describe your housing issue...'}
-                  rows={1}
-                  className="w-full border border-gray-200/70 bg-white/80 rounded-2xl px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300 focus:border-sky-400 transition-all duration-200 backdrop-blur-sm resize-none leading-5 h-11 max-h-24 flex items-center hover:bg-white/90 hover:border-gray-300/70"
-                  style={{ 
-                    scrollbarWidth: 'thin',
-                    scrollbarColor: '#cbd5e0 transparent',
-                    paddingTop: '10px',
-                    paddingBottom: '10px'
-                  }}
-                />
-
-                {/* Live overlay shows interim words instantly without shifting layout */}
-                {liveMode && isRecording && interimTextRef.current && (
-                  <div
-                    className="pointer-events-none absolute inset-0 rounded-2xl px-4 py-2 text-sm leading-5 flex items-center"
-                    aria-hidden="true"
-                  >
-                    <span className="opacity-0 whitespace-pre-wrap">
-                      {input}{input ? ' ' : ''}
-                    </span>
-                    <span className="absolute left-4 right-4 top-1/2 -translate-y-1/2 text-gray-500/80 italic truncate">
-                      {interimTextRef.current}
-                    </span>
-                  </div>
-                )}
-
-                {listeningBadge !== 'idle' && (
-                  <div className="absolute -top-6 left-2 text-xs text-sky-600">
-                    {listeningBadge === 'starting' ? 'Starting mic…' : 'Listening…'}
-                  </div>
-                )}
-                {input.length > 100 && (
-                  <div className="absolute -top-6 right-2 text-xs text-gray-400 animate-fade-in">
-                    {input.length}/1000
-                  </div>
-                )}
-              </div>
-
-              {/* Mic / Send button with tiny audio pulse */}
-              {isRecording ? (
-                <button
-                  type="button"
-                  onClick={() => { stopRecording(); }}
-                  disabled={isStreaming || isSending}
-                  aria-label="Stop recording"
-                  className="relative w-11 h-11 rounded-2xl border transition-all duration-200 shadow-lg flex-shrink-0
-                             bg-gradient-to-r from-red-500 to-pink-600 border-red-500 text-white hover:shadow-xl scale-110 animate-pulse-subtle
-                             focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-2"
-                  title="Stop recording"
-                >
-                  <MicIcon className="w-4 h-4 mx-auto" />
-                  <div className="absolute inset-0 rounded-2xl bg-red-400/30 animate-ping" />
-                  {audioActive && (
-                    <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                  )}
-                </button>
-              ) : input.trim() ? (
-                <button
-                  onClick={send}
-                  disabled={isStreaming || isSending}
-                  className="w-11 h-11 rounded-2xl bg-gradient-to-r from-sky-300 to-sky-400 text-white flex items-center justify-center transition-all duration-200 hover:shadow-xl disabled:opacity-50 flex-shrink-0 hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2"
-                  title="Send message"
-                >
-                  <SendIcon className="w-4 h-4 transition-transform duration-200 hover:translate-x-0.5" />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={startRecording}
-                  disabled={isStreaming || isSending || isStarting}
-                  aria-label="Start recording"
-                  className={`relative w-11 h-11 rounded-2xl border transition-all duration-200 shadow-lg flex-shrink-0
-                             ${isStarting ? 'bg-gray-100 border-gray-200 text-gray-400' : 'bg-white border-gray-200 text-sky-600 hover:bg-sky-50 hover:border-sky-200 hover:scale-105 active:scale-95'}
-                             focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2`}
-                  title="Start recording"
-                >
-                  <MicIcon className="w-4 h-4 mx-auto transition-transform duration-200" />
-                </button>
-              )}
-
-            </div>
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 }
