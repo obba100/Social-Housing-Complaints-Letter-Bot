@@ -16,7 +16,6 @@ type Msg = {
   meta?: { letter?: 'en' | 'translation'; md?: string; langLabel?: string };
 };
 
-// Fix the AnySR type
 type AnySR = any;
 
 /* ---------------- Letter parsing & Copy helpers ---------------- */
@@ -30,13 +29,12 @@ const extractLetterBlocks = (text: string) => {
     /<<LETTER_TRANSLATION_MD(?:\s+lang="([^"]+)")?\s*>>([\s\S]*?)<<\/LETTER_TRANSLATION_MD>>/
   );
 
-  // Try to read lang from either translation tag
   let translationLang = '';
   const trLangFromPlain = text.match(/<<LETTER_TRANSLATION\s+lang="([^"]+)"\s*>>/);
   const trLangFromMD = text.match(/<<LETTER_TRANSLATION_MD\s+lang="([^"]+)"\s*>>/);
-  if (trLangFromMD && trLangFromMD[1]) translationLang = trLangFromMD[1];
-  else if (trLangFromPlain && trLangFromPlain[1]) translationLang = trLangFromPlain[1];
-  else if (trMDMatch && trMDMatch[1]) translationLang = trMDMatch[1];
+  if (trLangFromMD?.[1]) translationLang = trLangFromMD[1];
+  else if (trLangFromPlain?.[1]) translationLang = trLangFromPlain[1];
+  else if (trMDMatch?.[1]) translationLang = trMDMatch[1];
 
   const before = enMatch ? text.slice(0, enMatch.index).trim() : '';
 
@@ -48,12 +46,8 @@ const extractLetterBlocks = (text: string) => {
   ].filter((n) => n >= 0);
 
   let after = '';
-  if (closePositions.length === 0) {
-    after = !enMatch ? text.trim() : '';
-  } else {
-    const lastClose = Math.max(...closePositions);
-    after = text.slice(lastClose).trim();
-  }
+  if (closePositions.length === 0) after = !enMatch ? text.trim() : '';
+  else after = text.slice(Math.max(...closePositions)).trim();
 
   return {
     before: before || '',
@@ -61,7 +55,7 @@ const extractLetterBlocks = (text: string) => {
     englishMD: enMDMatch ? enMDMatch[1].trim() : '',
     translation: trMatch ? trMatch[1].trim() : '',
     translationMD: trMDMatch ? trMDMatch[2].trim() : '',
-    translationLang: translationLang || '',
+  translationLang: translationLang || '',
     after: after || ''
   };
 };
@@ -79,20 +73,20 @@ const CopyButton: React.FC<{
     variant === 'primary'
       ? 'bg-gradient-to-r from-sky-400 to-sky-500 text-white hover:from-sky-500 hover:to-sky-600 border-0 shadow-lg'
       : 'border border-gray-200/60 bg-white/80 text-gray-700 hover:bg-gray-50/80 backdrop-blur-sm';
-  
+
   const handleCopy = async () => {
     try {
       if (copyFormatted && sourceElementId) {
-        const sourceElement = document.getElementById(sourceElementId);
-        if (sourceElement) {
+        const el = document.getElementById(sourceElementId);
+        if (el) {
           const range = document.createRange();
-          range.selectNodeContents(sourceElement);
-          const selection = window.getSelection();
-          if (selection) {
-            selection.removeAllRanges();
-            selection.addRange(range);
+          range.selectNodeContents(el);
+          const sel = window.getSelection();
+          if (sel) {
+            sel.removeAllRanges();
+            sel.addRange(range);
             document.execCommand('copy');
-            selection.removeAllRanges();
+            sel.removeAllRanges();
             setDone(true);
             setTimeout(() => setDone(false), 1500);
             return;
@@ -102,9 +96,7 @@ const CopyButton: React.FC<{
       await navigator.clipboard.writeText(text);
       setDone(true);
       setTimeout(() => setDone(false), 1500);
-    } catch {
-      // ignore
-    }
+    } catch {}
   };
 
   return (
@@ -122,12 +114,10 @@ const CopyButton: React.FC<{
   );
 };
 
-/* -------- Improved Markdown renderer (bold + italics + simple lists/headings) -------- */
+/* -------- Minimal Markdown renderer -------- */
 
 const renderInline = (s: string, keyBase: string) => {
-  // Split on bold first, keep delimiters
   const boldParts = s.split(/(\*\*[^*]+\*\*)/g);
-
   return boldParts.map((bp, bi) => {
     const boldMatch = bp.match(/^\*\*([^*]+)\*\*$/);
     if (boldMatch) {
@@ -137,8 +127,6 @@ const renderInline = (s: string, keyBase: string) => {
         </strong>
       );
     }
-
-    // Inside non-bold segments, support italics with *...* or _..._
     const italicParts = bp.split(/(\*[^*]+\*|_[^_]+_)/g);
     return italicParts.map((ip, ii) => {
       const iMatch = ip.match(/^\*(.+)\*$/) || ip.match(/^_(.+)_$/);
@@ -149,7 +137,6 @@ const renderInline = (s: string, keyBase: string) => {
           </em>
         );
       }
-      // Handle explicit line breaks within inline segments
       const withBreaks = ip.split(/ {2,}\n|\\n/g);
       return withBreaks.map((chunk, ci) =>
         ci < withBreaks.length - 1 ? (
@@ -165,23 +152,16 @@ const renderInline = (s: string, keyBase: string) => {
   });
 };
 
-const renderList = (
-  items: { text: string }[],
-  ordered: boolean,
-  blockKey: string
-) => {
-  if (ordered) {
-    return (
-      <ol key={blockKey} className="list-decimal ml-6 my-2 space-y-1 text-gray-900">
-        {items.map((it, i) => (
-          <li key={`${blockKey}-li-${i}`} className="pl-1">
-            {renderInline(it.text, `${blockKey}-li-${i}`)}
-          </li>
-        ))}
-      </ol>
-    );
-  }
-  return (
+const renderList = (items: { text: string }[], ordered: boolean, blockKey: string) =>
+  ordered ? (
+    <ol key={blockKey} className="list-decimal ml-6 my-2 space-y-1 text-gray-900">
+      {items.map((it, i) => (
+        <li key={`${blockKey}-li-${i}`} className="pl-1">
+          {renderInline(it.text, `${blockKey}-li-${i}`)}
+        </li>
+      ))}
+    </ol>
+  ) : (
     <ul key={blockKey} className="list-disc ml-6 my-2 space-y-1 text-gray-900">
       {items.map((it, i) => (
         <li key={`${blockKey}-li-${i}`} className="pl-1">
@@ -190,109 +170,53 @@ const renderList = (
       ))}
     </ul>
   );
-};
 
 const renderHeader = (text: string, level: number, key: string) => {
-  const sizes: Record<number, string> = {
-    1: 'text-xl',
-    2: 'text-lg',
-    3: 'text-base',
-  };
+  const sizes: Record<number, string> = { 1: 'text-xl', 2: 'text-lg', 3: 'text-base' };
   const cls = `${sizes[level] || 'text-base'} font-bold text-gray-900 mt-3 mb-1`;
-  
-  const tagName = `h${Math.min(3, Math.max(1, level))}`;
-  
-  if (tagName === 'h1') {
-    return <h1 key={key} className={cls}>{renderInline(text, key)}</h1>;
-  } else if (tagName === 'h2') {
-    return <h2 key={key} className={cls}>{renderInline(text, key)}</h2>;
-  } else {
-    return <h3 key={key} className={cls}>{renderInline(text, key)}</h3>;
-  }
+  const tag = `h${Math.min(3, Math.max(1, level))}` as 'h1' | 'h2' | 'h3';
+  if (tag === 'h1') return <h1 key={key} className={cls}>{renderInline(text, key)}</h1>;
+  if (tag === 'h2') return <h2 key={key} className={cls}>{renderInline(text, key)}</h2>;
+  return <h3 key={key} className={cls}>{renderInline(text, key)}</h3>;
 };
-
-const renderParagraph = (text: string, key: string) => (
-  <p key={key} className="my-2 leading-relaxed text-gray-900">
-    {renderInline(text, key)}
-  </p>
-);
 
 function renderMarkdown(md: string): React.ReactNode {
   if (!md) return null;
-
   const lines = md.replace(/\r\n/g, '\n').split('\n');
   const out: React.ReactNode[] = [];
-
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
-
-    // Skip pure empty lines (they end paragraphs)
-    if (/^\s*$/.test(line)) {
-      i += 1;
-      continue;
-    }
-
-    // Headings: #, ##, ###
+    if (/^\s*$/.test(line)) { i++; continue; }
     const h = line.match(/^(#{1,3})\s+(.*)$/);
-    if (h) {
-      out.push(renderHeader(h[2].trim(), h[1].length, `h-${i}`));
-      i += 1;
-      continue;
-    }
-
-    // Horizontal rule (--- or ___)
-    if (/^[-_]{3,}\s*$/.test(line)) {
-      out.push(<hr key={`hr-${i}`} className="my-3 border-amber-200/70" />);
-      i += 1;
-      continue;
-    }
-
-    // Lists (unordered)
-    const ulMatch = line.match(/^\s*[-*]\s+(.+)$/);
-    if (ulMatch) {
+    if (h) { out.push(renderHeader(h[2].trim(), h[1].length, `h-${i}`)); i++; continue; }
+    if (/^[-_]{3,}\s*$/.test(line)) { out.push(<hr key={`hr-${i}`} className="my-3 border-amber-200/70" />); i++; continue; }
+    const ul = line.match(/^\s*[-*]\s+(.+)$/);
+    if (ul) {
       const items: { text: string }[] = [];
       while (i < lines.length) {
         const m = lines[i].match(/^\s*[-*]\s+(.+)$/);
         if (!m) break;
-        items.push({ text: m[1] });
-        i += 1;
+        items.push({ text: m[1] }); i++;
       }
-      out.push(renderList(items, false, `ul-${i}-${items.length}`));
-      continue;
+      out.push(renderList(items, false, `ul-${i}-${items.length}`)); continue;
     }
-
-    // Lists (ordered)
-    const olMatch = line.match(/^\s*\d+\.\s+(.+)$/);
-    if (olMatch) {
+    const ol = line.match(/^\s*\d+\.\s+(.+)$/);
+    if (ol) {
       const items: { text: string }[] = [];
       while (i < lines.length) {
         const m = lines[i].match(/^\s*\d+\.\s+(.+)$/);
         if (!m) break;
-        items.push({ text: m[1] });
-        i += 1;
+        items.push({ text: m[1] }); i++;
       }
-      out.push(renderList(items, true, `ol-${i}-${items.length}`));
-      continue;
+      out.push(renderList(items, true, `ol-${i}-${items.length}`)); continue;
     }
-
-    // Paragraph: accumulate until blank line or block boundary
-    const para: string[] = [line];
-    i += 1;
-    while (
-      i < lines.length &&
-      !/^\s*$/.test(lines[i]) &&
-      !/^(#{1,3})\s+/.test(lines[i]) &&
-      !/^\s*[-*]\s+/.test(lines[i]) &&
-      !/^\s*\d+\.\s+/.test(lines[i]) &&
-      !/^[-_]{3,}\s*$/.test(lines[i])
-    ) {
-      para.push(lines[i]);
-      i += 1;
+    const para: string[] = [line]; i++;
+    while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^(#{1,3})\s+/.test(lines[i]) && !/^\s*[-*]\s+/.test(lines[i]) && !/^\s*\d+\.\s+/.test(lines[i]) && !/^[-_]{3,}\s*$/.test(lines[i])) {
+      para.push(lines[i]); i++;
     }
-    out.push(renderParagraph(para.join('\n'), `p-${i}`));
+    out.push(<p key={`p-${i}`} className="my-2 leading-relaxed text-gray-900">{renderInline(para.join('\n'), `p-${i}`)}</p>);
   }
-
   return <>{out}</>;
 }
 
@@ -319,15 +243,7 @@ const PenIcon = ({ className = '' }: { className?: string }) => (
 );
 
 const SparkleIcon = ({ className = '' }: { className?: string }) => (
-  <span className={className} role="img" aria-label="envelope">
-    ✉️
-  </span>
-);
-
-const DocumentIcon = ({ className = '' }: { className?: string }) => (
-  <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
-    <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z" />
-  </svg>
+  <span className={className} role="img" aria-label="envelope">✉️</span>
 );
 
 /* -------------------- Main component -------------------- */
@@ -344,54 +260,108 @@ export default function Chat() {
   // Streaming UI state
   const [isStreaming, setIsStreaming] = useState(false);
 
-  // NEW: sending guard and voice session tracking
+  // NEW: sending guard
   const [isSending, setIsSending] = useState(false);
-  const voiceSessionRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
 
   // Scroll state
   const [headerBlur, setHeaderBlur] = useState(false);
 
-  // Device detection (for keyboard suppression decisions)
+  // Device detection
   const [isMobile, setIsMobile] = useState(false);
+  const [isAndroid, setIsAndroid] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
 
   // Refs
   const recognitionRef = useRef<AnySR | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null); // fallback
-  const chunksRef = useRef<BlobPart[]>([]); // fallback
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<BlobPart[]>([]);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
 
-  // Continuous SR buffers and UI throttle
-  const committedTextRef = useRef('');           // finalised transcript (stable)
-  const interimTextRef = useRef('');             // latest interim words for overlay/commit-on-stop
-  const rafUpdateRef = useRef<number | null>(null);
+  // Dictation buffers (token-based)
+  const committedTokensRef = useRef<string[]>([]);
+  const interimTextRef = useRef(''); // string to overlay
+  const seenShinglesRef = useRef<Set<string>>(new Set()); // 3-gram fingerprints
+  const processedCursorRef = useRef<number>(0); // per-session result cursor
 
-  // Dedup guards
-  const seenFinalsRef = useRef<Set<string>>(new Set());
-  const lastFinalAtRef = useRef<number>(0);
-
-  // UI for listening status and speed
+  // Mic + restart state
   const [listeningBadge, setListeningBadge] = useState<'idle' | 'starting' | 'listening'>('idle');
   const [micReady, setMicReady] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
-
-  // Auto-restart controls
-  const autoRestartRef = useRef(false);
-  const restartWindowRef = useRef<number>(0);
+  const wantRecordingRef = useRef(false); // keeps intent across restarts
   const restartCountRef = useRef(0);
+  const lastFinalAtRef = useRef<number>(0);
+  const recStartAtRef = useRef<number>(0);
 
-  // Track current recogniser generation to ignore stale events
-  const recGenRef = useRef(0);
-
-  // Tiny “speaking” pulse on the mic
+  // Tiny pulse
   const [audioActive, setAudioActive] = useState(false);
 
-  // Last-word protection
+  // Timers
   const settleTimerRef = useRef<number | null>(null);
 
-  // Add custom styles for animations
-  React.useEffect(() => {
+  // Helpers
+  const normalise = (s: string) => `${s}`.replace(/\s+/g, ' ').trim();
+  const tokensToText = (toks: string[]) => normalise(toks.join(' '));
+  const tokenize = (s: string) => normalise(s).split(/\s+/).filter(Boolean);
+  const shingles = (toks: string[], k = 3) => {
+    const out: string[] = [];
+    for (let i = 0; i <= toks.length - k; i++) out.push(toks.slice(i, i + k).join(' '));
+    return out;
+  };
+
+  const updateInputFromTokens = () => {
+    setInput(tokensToText(committedTokensRef.current));
+  };
+
+  // append final text using word-level overlap detection + shingle dedupe
+  const appendFinalTokens = (finalText: string) => {
+    const newToks = tokenize(finalText);
+    if (!newToks.length) return;
+
+    // Overlap with last N words
+    const cur = committedTokensRef.current;
+    const N = 30;
+    const tail = cur.slice(Math.max(0, cur.length - N));
+
+    // find max overlap o where tail[-o:] == newToks[:o]
+    let o = Math.min(tail.length, newToks.length);
+    while (o > 0) {
+      let match = true;
+      for (let i = 0; i < o; i++) {
+        if (tail[tail.length - o + i] !== newToks[i]) { match = false; break; }
+      }
+      if (match) break;
+      o--;
+    }
+
+    const addition = newToks.slice(o);
+    if (!addition.length) return; // nothing new
+
+    // shingle dedupe: if most shingles already seen, ignore this chunk
+    const newShingles = shingles(addition);
+    let seenCount = 0;
+    for (const s of newShingles) if (seenShinglesRef.current.has(s)) seenCount++;
+    const seenRatio = newShingles.length ? seenCount / newShingles.length : 0;
+    if (seenRatio > 0.9 && addition.length > 3) return;
+
+    // commit (keep as array; join only for render)
+    committedTokensRef.current = [...cur, ...addition];
+
+    for (const s of newShingles) seenShinglesRef.current.add(s);
+    updateInputFromTokens();
+    lastFinalAtRef.current = Date.now();
+  };
+
+  const promoteInterimToFinal = () => {
+    const t = interimTextRef.current.trim();
+    if (!t) return;
+    appendFinalTokens(t);
+    interimTextRef.current = '';
+  };
+
+  // Styles
+  useEffect(() => {
     const style = document.createElement('style');
     style.textContent = `
       @keyframes fade-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
@@ -422,28 +392,22 @@ export default function Chat() {
   // Device detection
   useEffect(() => {
     const ua = navigator.userAgent || '';
+    setIsAndroid(/Android/i.test(ua));
+    setIsIOS(/iPhone|iPad|iPod/i.test(ua));
     const isMobileUA = /Android|iPhone|iPad|iPod/i.test(ua);
     const isSmallScreen = window.innerWidth < 640;
     setIsMobile(isMobileUA || isSmallScreen);
 
-    const onResize = () => {
-      setIsMobile(isMobileUA || window.innerWidth < 640);
-    };
+    const onResize = () => setIsMobile(isMobileUA || window.innerWidth < 640);
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // Improved scroll to bottom
+  // Scrolling / focus
   const scrollToBottom = useCallback(() => {
     if (!scrollerRef.current) return;
-    requestAnimationFrame(() => {
-      if (scrollerRef.current) {
-        scrollerRef.current.scrollTop = scrollerRef.current.scrollHeight;
-      }
-    });
+    requestAnimationFrame(() => { scrollerRef.current!.scrollTop = scrollerRef.current!.scrollHeight; });
   }, []);
-
-  // Dynamic header blur
   const handleScroll = useCallback(() => {
     if (!scrollerRef.current) return;
     const scrolled = scrollerRef.current.scrollTop > 20;
@@ -451,74 +415,17 @@ export default function Chat() {
   }, [headerBlur]);
 
   useEffect(() => {
-    // Focus and adjust height when input changes
     if (inputRef.current) {
       if (!isRecording) inputRef.current.focus();
-      if (!input) {
-        inputRef.current.style.height = 'auto';
-      } else {
-        adjustTextareaHeight(inputRef.current);
-      }
+      if (!input) inputRef.current.style.height = 'auto';
+      else adjustTextareaHeight(inputRef.current);
     }
   }, [input, isRecording]);
 
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
+  useEffect(() => { inputRef.current?.focus(); }, []);
+  useEffect(() => { scrollToBottom(); }, [messages, isStreaming, scrollToBottom]);
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages, isStreaming, scrollToBottom]);
-
-  const normalise = (s: string) => s.replace(/\s+/g, ' ').trim();
-
-  const promoteInterimToFinal = () => {
-    const tail = (interimTextRef.current || '').trim();
-    if (!tail) return;
-    committedTextRef.current = normalise(committedTextRef.current + ' ' + tail);
-    interimTextRef.current = '';
-    setInput(committedTextRef.current);
-    lastFinalAtRef.current = Date.now();
-  };
-
-  const appendFinalChunk = (raw: string) => {
-    const chunk = normalise(raw);
-    if (!chunk) return;
-
-    // Deduplicate exact repeats
-    if (seenFinalsRef.current.has(chunk)) return;
-
-    const current = committedTextRef.current;
-    if (!current) {
-      committedTextRef.current = chunk;
-      setInput(committedTextRef.current);
-      seenFinalsRef.current.add(chunk);
-      lastFinalAtRef.current = Date.now();
-      return;
-    }
-
-    // If engine re-sends a previous sentence, ignore it
-    if (current.endsWith(chunk) || current.includes(' ' + chunk + ' ')) {
-      seenFinalsRef.current.add(chunk);
-      return;
-    }
-
-    // Overlap guard: if chunk begins with the tail of current, only add the non-overlapping part
-    const tailLen = Math.min(80, current.length);
-    const tail = current.slice(-tailLen);
-    if (chunk.startsWith(tail)) {
-      const addition = normalise(chunk.slice(tail.length));
-      if (!addition) { seenFinalsRef.current.add(chunk); return; }
-      committedTextRef.current = normalise(current + ' ' + addition);
-    } else {
-      committedTextRef.current = normalise(current + ' ' + chunk);
-    }
-
-    setInput(committedTextRef.current);
-    seenFinalsRef.current.add(chunk);
-    lastFinalAtRef.current = Date.now();
-  };
-
+  // Mic permission
   const ensureMicPermission = async () => {
     if (micReady) return true;
     try {
@@ -531,149 +438,125 @@ export default function Chat() {
     }
   };
 
-  // Create a fresh recogniser instance and start it
-  const createRecognizerAndStart = (initial: boolean) => {
+  // Fresh recogniser per start/restart
+  const createRecognizerAndStart = () => {
     const SR = window.webkitSpeechRecognition || window.SpeechRecognition;
     if (!SR) return 'fallback';
 
-    const thisGen = ++recGenRef.current;
     const rec = new SR();
-
-    rec.lang = 'en-GB';
+    // Force continuous for better gap handling on both Android and iOS Safari
+    rec.continuous = true;
     rec.interimResults = true;
     rec.maxAlternatives = 1;
-    rec.continuous = true; // iOS may ignore; Android usually honours
+    rec.lang = 'en-GB';
 
     recognitionRef.current = rec;
+    processedCursorRef.current = 0; // reset per session
+    recStartAtRef.current = Date.now();
 
     rec.onstart = () => {
-      if (thisGen !== recGenRef.current) return; // stale
-      if (initial) {
-        setIsRecording(true);
-        setIsStarting(false);
-        setListeningBadge('listening');
+      // Keep UI in listening state across auto-restarts
+      setIsRecording(true);
+      setIsStarting(false);
+      setListeningBadge('listening');
 
-        // Reset buffers on actual start to capture first words
-        committedTextRef.current = input.trim();
-        interimTextRef.current = '';
-        seenFinalsRef.current.clear();
-        lastFinalAtRef.current = 0;
-
-        // Suppress mobile keyboard during recording
-        if (isMobile && inputRef.current) {
-          inputRef.current.blur();
-        }
-      }
+      // reset interim; keep committed
+      interimTextRef.current = '';
+      seenShinglesRef.current.clear();
+      // Do NOT clear committedTokensRef here (otherwise you'd lose text)
+      if (isMobile && inputRef.current) inputRef.current.blur();
     };
 
-    rec.onaudiostart = () => { if (thisGen === recGenRef.current) setAudioActive(true); };
-    rec.onaudioend = () => { if (thisGen === recGenRef.current) setAudioActive(false); };
+    rec.onaudiostart = () => setAudioActive(true);
+    rec.onaudioend = () => setAudioActive(false);
 
     rec.onspeechend = () => {
-      if (thisGen !== recGenRef.current) return;
       if (settleTimerRef.current) window.clearTimeout(settleTimerRef.current);
-      settleTimerRef.current = window.setTimeout(() => {
-        if (isRecording) promoteInterimToFinal();
-      }, 250);
+      settleTimerRef.current = window.setTimeout(() => { if (wantRecordingRef.current) promoteInterimToFinal(); }, 220);
     };
 
     rec.onresult = (e: any) => {
-      if (thisGen !== recGenRef.current) return;
-
-      let finalChunk = '';
-      let interimChunk = '';
-
+      // Process each result once
+      const interimParts: string[] = [];
       for (let i = e.resultIndex; i < e.results.length; i++) {
-        const result = e.results[i];
-        const transcript = result[0]?.transcript ?? '';
-        if (result.isFinal) finalChunk += transcript + ' ';
-        else interimChunk += transcript + ' ';
+        if (i < processedCursorRef.current) continue;
+        const r = e.results[i];
+        const t = (r[0]?.transcript ?? '').trim();
+        if (!t) { processedCursorRef.current = Math.max(processedCursorRef.current, i + 1); continue; }
+        if (r.isFinal) {
+          appendFinalTokens(t);
+          processedCursorRef.current = i + 1;
+        } else {
+          interimParts.push(t);
+        }
       }
+      interimTextRef.current = interimParts.join(' ').trim();
 
-      if (finalChunk) {
-        appendFinalChunk(finalChunk);
-      }
-
-      interimTextRef.current = interimChunk.trim();
-
+      // Protect last word
       if (settleTimerRef.current) window.clearTimeout(settleTimerRef.current);
-      settleTimerRef.current = window.setTimeout(() => {
-        if (isRecording) promoteInterimToFinal();
-      }, 450);
-
-      if (rafUpdateRef.current) cancelAnimationFrame(rafUpdateRef.current);
-      rafUpdateRef.current = requestAnimationFrame(() => {});
+      settleTimerRef.current = window.setTimeout(() => { if (wantRecordingRef.current) promoteInterimToFinal(); }, 360);
     };
 
     rec.onerror = (e: any) => {
-      if (thisGen !== recGenRef.current) return;
-      // Ignore benign cases; let onend handle restart
-      if (e?.error === 'aborted') return;
-      if (e?.error === 'no-speech') return;
+      // If permissions denied, stop trying
       if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') {
+        wantRecordingRef.current = false;
         setIsRecording(false);
         setIsStarting(false);
         setListeningBadge('idle');
-        autoRestartRef.current = false;
       }
+      // Other errors handled by onend with restart
     };
 
     rec.onend = () => {
-      if (thisGen !== recGenRef.current) return;
-
+      // Flush any remaining interim quickly
       promoteInterimToFinal();
-      if (settleTimerRef.current) {
-        window.clearTimeout(settleTimerRef.current);
-        settleTimerRef.current = null;
-      }
+      if (settleTimerRef.current) { window.clearTimeout(settleTimerRef.current); settleTimerRef.current = null; }
 
-      // Auto-restart while user expects recording
-      if (autoRestartRef.current && isRecording && !isSending) {
+      if (wantRecordingRef.current && !isSending) {
+        // Quick restart to bridge pauses
         const now = Date.now();
-        // Sliding window to avoid fast loops
-        if (now - restartWindowRef.current > 6000) {
-          restartWindowRef.current = now;
-          restartCountRef.current = 0;
+        const ranFor = now - recStartAtRef.current;
+        const hadRecentFinal = lastFinalAtRef.current && now - lastFinalAtRef.current < 1000;
+        // If recogniser ended quickly, increase delay a touch to avoid flapping
+        if (ranFor < 600) restartCountRef.current += 1; else restartCountRef.current = 0;
+        const backoff = Math.min(300, restartCountRef.current * 60);
+        const base = hadRecentFinal ? 70 : 100; // near-immediate
+        const delay = base + backoff;
+
+        // Ensure old instance won’t fire stray events
+        if (recognitionRef.current) {
+          recognitionRef.current.onresult = null;
+          recognitionRef.current.onerror = null;
+          recognitionRef.current.onend = null;
+          recognitionRef.current = null;
         }
-        restartCountRef.current += 1;
 
-        const hadRecentFinal = lastFinalAtRef.current && now - lastFinalAtRef.current < 1200;
-        const baseDelay = 450; // gentle on both Android and iOS
-        const backoff = Math.min(2000, restartCountRef.current * 250);
-        const delay = baseDelay + backoff + (hadRecentFinal ? 120 : 0);
-
-        setTimeout(() => {
-          if (autoRestartRef.current && isRecording) {
-            createRecognizerAndStart(false);
-          }
-        }, delay);
+        setTimeout(() => { if (wantRecordingRef.current) createRecognizerAndStart(); }, delay);
       } else {
         setListeningBadge('idle');
       }
     };
 
-    try {
-      rec.start();
-    } catch {
-      // swallow; onerror/onend will manage state
-    }
-
+    try { rec.start(); } catch {}
     return 'ok';
   };
 
   const startRecording = async () => {
-    if (isStarting || isRecording || isSending) return;
+    if (isStarting || isSending) return;
     setIsStarting(true);
     setListeningBadge('starting');
-
-    autoRestartRef.current = true;
 
     const ok = await ensureMicPermission();
     if (!ok) { setIsStarting(false); setListeningBadge('idle'); return; }
 
-    const status = createRecognizerAndStart(true);
+    wantRecordingRef.current = true;
+    // carry over any typed text into tokens
+    committedTokensRef.current = tokenize(tokensToText(committedTokensRef.current) || input);
+
+    const status = createRecognizerAndStart();
     if (status === 'fallback') {
-      // Web Speech not available: fallback to MediaRecorder -> /api/transcribe on stop
+      // Fallback: MediaRecorder -> server STT on stop
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const mr = new MediaRecorder(stream);
@@ -687,10 +570,7 @@ export default function Chat() {
             fd.append('audio', blob, 'note.webm');
             const res = await fetch('/api/transcribe', { method: 'POST', body: fd });
             const data = await res.json();
-            if (data?.text) {
-              committedTextRef.current = normalise(input.trim() + ' ' + data.text);
-              setInput(committedTextRef.current);
-            }
+            if (data?.text) appendFinalTokens(data.text);
           } catch {}
           setIsTranscribing(false);
           setIsRecording(false);
@@ -702,7 +582,7 @@ export default function Chat() {
         setIsRecording(true);
         setIsStarting(false);
         setListeningBadge('listening');
-        if (isMobile && inputRef.current) inputRef.current.blur(); // hide keyboard during fallback record too
+        if (isMobile && inputRef.current) inputRef.current.blur();
       } catch {
         setIsStarting(false);
         setListeningBadge('idle');
@@ -711,75 +591,61 @@ export default function Chat() {
   };
 
   const stopRecording = () => new Promise<void>((resolve) => {
-    autoRestartRef.current = false; // prevent onend restarts
+    wantRecordingRef.current = false; // stop auto restarts
     setIsRecording(false);
     setIsStarting(false);
-    voiceSessionRef.current += 1; // Invalidate current session
     setListeningBadge('idle');
 
-    const GRACE = 200;
+    const GRACE = 150;
     const finish = () => {
       promoteInterimToFinal();
-
       const rec = recognitionRef.current;
       if (rec) {
-        // Detach handlers and stop, then drop instance to avoid stale replays
-        rec.onresult = null;
-        rec.onerror = null;
-        rec.onend = null;
+        rec.onresult = null; rec.onerror = null; rec.onend = null;
         try { rec.stop(); } catch {}
         recognitionRef.current = null;
       }
       resolve();
     };
 
-    if (recognitionRef.current) {
-      window.setTimeout(finish, GRACE);
-      return;
-    }
+    if (recognitionRef.current) { window.setTimeout(finish, GRACE); return; }
 
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.addEventListener('stop', () => resolve(), { once: true });
       mediaRecorderRef.current.stop();
       return;
     }
-
     resolve();
   });
 
+  /* ---------------- Chat send/write ---------------- */
+
   const send = async () => {
-    if (isRecording) {
-      await stopRecording();
-    }
+    if (isRecording) await stopRecording();
     await sendWithPhase(false);
   };
 
   const writeLetter = async () => {
-    if (isRecording) {
-      await stopRecording();
-    }
+    if (isRecording) await stopRecording();
     await sendWithPhase(true);
   };
 
   const sendWithPhase = async (draft: boolean) => {
-    const text = input.trim();
+    const text = tokensToText(committedTokensRef.current);
     if (draft === false && !text) return;
     if (isStreaming || isSending) return;
 
     setIsSending(true);
 
-    // Freeze current voice session so late events are ignored
-    voiceSessionRef.current += 1;
-
     const nextMessages: Msg[] = text ? [...messages, { role: 'user', content: text }] : [...messages];
-
     setMessages(nextMessages);
+
+    // clear composer
+    committedTokensRef.current = [];
+    interimTextRef.current = '';
     setInput('');
-    
-    if (inputRef.current) {
-      inputRef.current.style.height = 'auto';
-    }
-    
+
+    if (inputRef.current) inputRef.current.style.height = 'auto';
     setIsStreaming(true);
 
     const holderIndex = nextMessages.length;
@@ -789,7 +655,6 @@ export default function Chat() {
     try {
       const controller = new AbortController();
       abortRef.current = controller;
-
       res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -799,7 +664,7 @@ export default function Chat() {
     } catch (e: unknown) {
       setMessages((prev) => {
         const updated = [...prev];
-        updated[holderIndex] = { role: 'assistant', content: `Network error: ${String(e && typeof e === 'object' && 'message' in e ? (e as any).message : e)}` };
+        updated[holderIndex] = { role: 'assistant', content: `Network error: ${String((e as any)?.message ?? e)}` };
         return updated;
       });
       setIsStreaming(false);
@@ -811,10 +676,7 @@ export default function Chat() {
       const errText = await res.text().catch(() => '');
       setMessages((prev) => {
         const updated = [...prev];
-        updated[holderIndex] = {
-          role: 'assistant',
-          content: `Error ${res.status}: ${errText || 'Problem generating response'}`
-        };
+        updated[holderIndex] = { role: 'assistant', content: `Error ${res.status}: ${errText || 'Problem generating response'}` };
         return updated;
       });
       setIsStreaming(false);
@@ -833,9 +695,7 @@ export default function Chat() {
 
       setMessages((prev) => {
         const updated = [...prev];
-        if (updated[holderIndex]?.role === 'assistant') {
-          updated[holderIndex] = { role: 'assistant', content: accStr };
-        }
+        if (updated[holderIndex]?.role === 'assistant') updated[holderIndex] = { role: 'assistant', content: accStr };
         return updated;
       });
     }
@@ -844,30 +704,15 @@ export default function Chat() {
     if (parsed.english || parsed.englishMD || parsed.translation || parsed.translationMD) {
       setMessages((prev) => {
         const before = parsed.before ? [{ role: 'assistant', content: parsed.before } as Msg] : [];
-        const englishCard =
-          parsed.english || parsed.englishMD
-            ? [
-                {
-                  role: 'assistant',
-                  content: parsed.english || '',
-                  meta: { letter: 'en', md: parsed.englishMD || '' }
-                } as Msg
-              ]
-            : [];
-        const translationCard =
-          parsed.translation || parsed.translationMD
-            ? [
-                {
-                  role: 'assistant',
-                  content: parsed.translation || '',
-                  meta: { letter: 'translation', md: parsed.translationMD || '', langLabel: parsed.translationLang || undefined }
-                } as Msg
-              ]
-            : [];
+        const englishCard = (parsed.english || parsed.englishMD)
+          ? [{ role: 'assistant', content: parsed.english || '', meta: { letter: 'en', md: parsed.englishMD || '' } as any }]
+          : [];
+        const translationCard = (parsed.translation || parsed.translationMD)
+          ? [{ role: 'assistant', content: parsed.translation || '', meta: { letter: 'translation', md: parsed.translationMD || '', langLabel: parsed.translationLang || undefined } as any }]
+          : [];
         const after = parsed.after ? [{ role: 'assistant', content: parsed.after } as Msg] : [];
-
         const updated = [...prev];
-        updated.splice(holderIndex, 1, ...before, ...englishCard, ...translationCard, ...after);
+        updated.splice(holderIndex, 1, ...before, ...(englishCard as any), ...(translationCard as any), ...after);
         return updated;
       });
     }
@@ -877,44 +722,35 @@ export default function Chat() {
     inputRef.current?.focus();
   };
 
+  /* ---------------- Composer ---------------- */
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      send();
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
   };
 
-  // Auto-resize textarea like WhatsApp
   const adjustTextareaHeight = (textarea: HTMLTextAreaElement) => {
     textarea.style.height = 'auto';
     const scrollHeight = textarea.scrollHeight;
-    const maxHeight = 96; // ~4 lines max
+    const maxHeight = 96; // ~4 lines
     textarea.style.height = Math.min(scrollHeight, maxHeight) + 'px';
     textarea.style.overflowY = scrollHeight > maxHeight ? 'scroll' : 'hidden';
     textarea.scrollTop = textarea.scrollHeight;
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
+    const val = e.target.value;
+    setInput(val);
+    committedTokensRef.current = tokenize(val);
     adjustTextareaHeight(e.target);
   };
 
   const TypingDots = () => {
     const [messageIndex, setMessageIndex] = useState(0);
-    const typingMessages = [
-      "AI is thinking",
-      "Analysing your request",
-      "Crafting your response",
-      "Almost ready"
-    ];
-
+    const typingMessages = ["AI is thinking","Analysing your request","Crafting your response","Almost ready"];
     useEffect(() => {
-      const interval = setInterval(() => {
-        setMessageIndex(prev => (prev + 1) % typingMessages.length);
-      }, 2000);
-      return () => clearInterval(interval);
+      const id = setInterval(() => setMessageIndex(p => (p + 1) % typingMessages.length), 2000);
+      return () => clearInterval(id);
     }, []);
-
     return (
       <div className="flex items-center gap-2">
         <div className="flex space-x-1">
@@ -922,50 +758,31 @@ export default function Chat() {
           <div className="w-2 h-2 bg-gradient-to-r from-sky-300 to-sky-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
           <div className="w-2 h-2 bg-gradient-to-r from-sky-300 to-sky-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
         </div>
-        <span className="ml-1 text-sm text-gray-500 transition-all duration-500">
-          {typingMessages[messageIndex]}...
-        </span>
+        <span className="ml-1 text-sm text-gray-500">{typingMessages[messageIndex]}...</span>
       </div>
     );
   };
 
-  /* --------------------------- UI --------------------------- */
-
   const LetterBubble: React.FC<{ title: string; text: string; md?: string; index: number }> = ({ title, text, md, index }) => {
     const contentId = `letter-content-${index}`;
-    
     return (
       <div className="mb-6 flex justify-start">
         <div className="max-w-[90%] rounded-3xl overflow-hidden border-2 border-amber-200/80 bg-gradient-to-br from-amber-50/90 via-yellow-50/80 to-orange-50/70 backdrop-blur-md shadow-2xl ring-1 ring-amber-100/60 hover-lift group">
-          <div className="flex items-center justify-between gap-3 border-b-2 border-amber-200/70 bg-gradient-to-r from-amber-100/60 via-yellow-100/50 to-amber-100/60 px-5 py-4 group-hover:from-amber-200/60 group-hover:via-yellow-200/50 group-hover:to-amber-200/60 transition-all duration-300">
+          <div className="flex items-center justify-between gap-3 border-b-2 border-amber-200/70 bg-gradient-to-r from-amber-100/60 via-yellow-100/50 to-amber-100/60 px-5 py-4">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-amber-500 via-yellow-600 to-orange-600 flex items-center justify-center shadow-lg group-hover:shadow-xl transition-all duration-300">
-                <SparkleIcon className="w-4 h-4 text-white drop-shadow-sm" />
+              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-amber-500 via-yellow-600 to-orange-600 flex items-center justify-center shadow-lg">
+                <SparkleIcon className="w-4 h-4 text-white" />
               </div>
               <span className="text-base font-bold text-amber-900 truncate">{title}</span>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
-              <CopyButton 
-                text={text || md || ''} 
-                label="Copy Rich" 
-                variant="primary" 
-                copyFormatted={true}
-                sourceElementId={contentId}
-              />
-              <CopyButton 
-                text={text || md || ''} 
-                label="Copy Plain" 
-                variant="secondary" 
-              />
+              <CopyButton text={text || md || ''} label="Copy Rich" variant="primary" copyFormatted={true} sourceElementId={contentId} />
+              <CopyButton text={text || md || ''} label="Copy Plain" variant="secondary" />
             </div>
           </div>
           <div className="px-6 py-5 bg-gradient-to-b from-yellow-50/80 to-amber-50/60">
             <div id={contentId} className="whitespace-pre-wrap leading-relaxed text-gray-900 font-medium">
-              {md && md.trim() !== '' ? (
-                renderMarkdown(md)
-              ) : (
-                text
-              )}
+              {md?.trim() ? renderMarkdown(md) : text}
             </div>
           </div>
         </div>
@@ -974,54 +791,36 @@ export default function Chat() {
   };
 
   return (
-    <div className="flex flex-col h-screen w-full max-w-full overflow-hidden 
-                    bg-gradient-to-br from-gray-100 via-gray-50 to-sky-100/50 
-                    rounded-t-3xl shadow-lg"
-         style={{ height: '100vh', maxHeight: '100vh' }}>
+    <div className="flex flex-col h-screen w-full max-w-full overflow-hidden bg-gradient-to-br from-gray-100 via-gray-50 to-sky-100/50" style={{ height: '100vh', maxHeight: '100vh' }}>
 
-      {/* Header - dynamic blur based on scroll; no vertical padding, fixed height */}
-      <header className={`flex-shrink-0 flex items-center gap-4 px-3 h-14 
-                     bg-gradient-to-r from-sky-100 via-sky-200 to-sky-300 
-                     border-b border-gray-300 transition-all duration-200 ${
-                       headerBlur ? 'shadow-lg' : ''
-                     }`}>
+      {/* Header */}
+      <header className={`flex-shrink-0 flex items-center gap-4 px-3 h-14 bg-gradient-to-r from-sky-100 via-sky-200 to-sky-300 border-b border-gray-300 ${headerBlur ? 'shadow-lg' : ''}`}>
         <div className="relative">
-          <div className="h-8 w-8 rounded-2xl bg-gradient-to-br from-sky-300 via-sky-400 to-sky-500 
-                          shadow-lg flex items-center justify-center">
-            <SparkleIcon className="w-4 h-4 text-white" />
+          <div className="h-8 w-8 rounded-2xl bg-gradient-to-br from-sky-300 via-sky-400 to-sky-500 shadow-lg flex items-center justify-center">
+            <span className="w-4 h-4 text-white">✉️</span>
           </div>
-          <div className="absolute -right-1 -bottom-1 h-3 w-3 rounded-full 
-                          bg-gradient-to-r from-emerald-400 to-emerald-500 
-                          ring-2 ring-white shadow-sm animate-pulse-slow"
-               title="Online" />
+          <div className="absolute -right-1 -bottom-1 h-3 w-3 rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-white shadow-sm animate-pulse-slow" title="Online" />
         </div>
         <div className="min-w-0 flex-1">
-          <h1 className="text-lg font-semibold tracking-tight text-gray-900 font-sans">
-            Complaint Letter Assistant
-          </h1>
+          <h1 className="text-lg font-semibold tracking-tight text-gray-900 font-sans">Complaint Letter Assistant</h1>
         </div>
       </header>
 
-      {/* Messages area - takes remaining space; no top/bottom padding */}
-      <div 
-        ref={scrollerRef} 
+      {/* Messages */}
+      <div
+        ref={scrollerRef}
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto px-4 py-0 space-y-2 bg-gradient-to-br from-white via-sky-50 to-sky-100 scrollbar-thin scrollbar-thumb-sky-200 scrollbar-track-transparent"
-        style={{ 
-          minHeight: 0,
-          overscrollBehavior: 'contain'
-        }}
+        style={{ minHeight: 0, overscrollBehavior: 'contain' }}
       >
         {messages.length === 0 && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center max-w-md mx-auto px-4 animate-fade-in">
               <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-sky-300 via-sky-400 to-sky-500 flex items-center justify-center mx-auto mb-4 shadow-lg animate-float">
-                <SparkleIcon className="w-8 h-8 text-white" />
+                <span className="w-8 h-8 text-white">✉️</span>
               </div>
               <h2 className="text-lg font-semibold text-gray-900 mb-2">Start Your Complaint</h2>
-              <p className="text-gray-600 text-sm leading-relaxed">
-                Describe your housing issue, or use the mic to speak. Include dates, who you contacted, and what resolution you're seeking.
-              </p>
+              <p className="text-gray-600 text-sm">Describe your housing issue or use the mic to speak.</p>
             </div>
           </div>
         )}
@@ -1032,21 +831,19 @@ export default function Chat() {
           const isLetterTr = m.meta?.letter === 'translation';
 
           if (isLetterEn) return <LetterBubble key={i} index={i} title="📝 Your Letter (English)" text={m.content} md={m.meta?.md} />;
-
           if (isLetterTr) {
             const lang = m.meta?.langLabel ? ` — ${m.meta.langLabel}` : '';
             return <LetterBubble key={i} index={i} title={`🌐 Translation${lang}`} text={m.content} md={m.meta?.md} />;
           }
 
           return (
-            <div key={i} className={`flex mb-4 animate-slide-in ${isUser ? 'justify-end' : 'justify-start'}`} 
-                 style={{ animationDelay: `${i * 100}ms` }}>
+            <div key={i} className={`flex mb-4 animate-slide-in ${isUser ? 'justify-end' : 'justify-start'}`} style={{ animationDelay: `${i * 100}ms` }}>
               <div
                 className={[
                   'max-w-[85%] px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap shadow-lg backdrop-blur-sm transition-all duration-200 hover:shadow-xl',
                   isUser
-                    ? 'bg-gradient-to-r from-sky-300 to-sky-400 text-white rounded-br-md hover:from-sky-400 hover:to-sky-500 transform hover:scale-[1.02]'
-                    : 'bg-white/80 text-gray-800 rounded-bl-md border border-gray-200/50 hover:bg-white/90 hover:border-gray-300/50 transform hover:scale-[1.02]'
+                    ? 'bg-gradient-to-r from-sky-300 to-sky-400 text-white rounded-br-md hover:from-sky-400 hover:to-sky-500'
+                    : 'bg-white/80 text-gray-800 rounded-bl-md border border-gray-200/50 hover:bg-white/90 hover:border-gray-300/50'
                 ].join(' ')}
               >
                 <div className="whitespace-pre-wrap">{m.content}</div>
@@ -1066,130 +863,105 @@ export default function Chat() {
         {isTranscribing && !isStreaming && (
           <div className="mb-4 flex justify-start animate-slide-in">
             <div className="bg-white/90 text-gray-800 rounded-2xl rounded-bl-md px-4 py-3 border border-gray-200/50 shadow-lg backdrop-blur-sm">
-              <span className="text-sky-600 flex items-center gap-2">
-                <span className="animate-pulse">🎙️</span> 
-                Transcribing audio...
-              </span>
+              <span className="text-sky-600 flex items-center gap-2"><span className="animate-pulse">🎙️</span> Transcribing audio...</span>
             </div>
           </div>
         )}
       </div>
 
-      {/* Input area - Polished WhatsApp-style, keyboard suppressed while recording */}
-      <div className="flex-shrink-0 bg-white/80 border-t border-gray-200/50 shadow-2xl px-3 pb-3 safe-area-inset-bottom">
-        <div className="bg-white/90 rounded-3xl border border-gray-200/50 shadow-2xl p-2 hover:shadow-3xl transition-all duration-200">
-          <div className="flex items-center gap-2">
-            {/* Draft letter button */}
-            <button
-              onClick={writeLetter}
-              disabled={isStreaming || isSending}
-              className={[
-                'h-11 transition-all duration-200 shadow-lg flex-shrink-0 flex items-center justify-center',
-                'bg-gradient-to-r from-sky-300 via-sky-400 to-sky-500 text-white',
-                'hover:from-sky-400 hover:via-sky-500 hover:to-sky-600',
-                'disabled:opacity-50 disabled:cursor-not-allowed',
-                'focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2',
-                'active:scale-95 hover:scale-105 hover:shadow-xl',
-                'w-11 rounded-2xl sm:w-auto sm:px-5 sm:gap-2 sm:rounded-2xl'
-              ].join(' ')}
-              title="Generate a formal complaint letter"
-            >
-              <PenIcon className="w-4 h-4 transition-transform duration-200 group-hover:rotate-12" />
-              <span className="hidden sm:inline font-medium text-sm">Draft Letter</span>
-            </button>
+      {/* Composer: FLUSH, EDGE-TO-EDGE, NO SHADOWS */}
+      <div
+        className="flex-shrink-0 bg-white"
+        style={{
+          paddingLeft: 12,
+          paddingRight: 12,
+          paddingTop: 8,
+          paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 8px)'
+        }}
+      >
+        <div className="flex items-center gap-2">
+          {/* Draft */}
+          <button
+            onClick={writeLetter}
+            disabled={isStreaming || isSending}
+            className={[
+              'h-11 transition-all duration-200 flex-shrink-0 flex items-center justify-center',
+              'bg-gradient-to-r from-sky-300 via-sky-400 to-sky-500 text-white',
+              'hover:from-sky-400 hover:via-sky-500 hover:to-sky-600',
+              'disabled:opacity-50',
+              'w-11 rounded-2xl sm:w-auto sm:px-5 sm:gap-2'
+            ].join(' ')}
+            title="Generate a formal complaint letter"
+          >
+            <PenIcon className="w-4 h-4" />
+            <span className="hidden sm:inline font-medium text-sm">Draft Letter</span>
+          </button>
 
-            {/* Input field with live overlay; suppress keyboard while recording */}
-            <div className="flex-1 relative">
-              <textarea
-                ref={inputRef}
-                value={input}
-                onChange={handleInputChange}
-                onKeyDown={onKeyDown}
-                placeholder={listeningBadge === 'listening' ? 'Listening… speak clearly' : 'Describe your housing issue...'}
-                rows={1}
-                readOnly={isRecording}           // prevent edits while recording
-                inputMode={isRecording ? 'none' : undefined} // suppress virtual keyboard on mobile
-                className="w-full border border-gray-200/70 bg-white/80 rounded-2xl px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300 focus:border-sky-400 transition-all duration-200 backdrop-blur-sm resize-none leading-5 h-11 max-h-24 flex items-center hover:bg-white/90 hover:border-gray-300/70"
-                style={{ 
-                  scrollbarWidth: 'thin',
-                  scrollbarColor: '#cbd5e0 transparent',
-                  paddingTop: '10px',
-                  paddingBottom: '10px',
-                  caretColor: isRecording ? 'transparent' as any : undefined
-                }}
-              />
-
-              {/* Live overlay shows interim words instantly without rewriting the textarea */}
-              {isRecording && interimTextRef.current && (
-                <div
-                  className="pointer-events-none absolute inset-0 rounded-2xl px-4 py-2 text-sm leading-5 flex items-center"
-                  aria-hidden="true"
-                >
-                  {/* Invisible committed text to align the interim start position */}
-                  <span className="opacity-0 whitespace-pre-wrap">
-                    {input}{input ? ' ' : ''}
-                  </span>
-                  {/* Interim words rendered lightly over the textbox */}
-                  <span className="absolute left-4 right-4 top-1/2 -translate-y-1/2 text-gray-500/80 italic truncate">
-                    {interimTextRef.current}
-                  </span>
-                </div>
-              )}
-
-              {/* Small floating listening badge that does not affect layout */}
-              {listeningBadge !== 'idle' && (
-                <div className="absolute -top-6 left-2 text-xs text-sky-600">
-                  {listeningBadge === 'starting' ? 'Starting mic…' : 'Listening…'}
-                </div>
-              )}
-              {/* Character counter */}
-              {input.length > 100 && (
-                <div className="absolute -top-6 right-2 text-xs text-gray-400 animate-fade-in">
-                  {input.length}/1000
-                </div>
-              )}
-            </div>
-
-            {/* Context-sensitive button: Record/Stop when empty, Send when there is text */}
-            {isRecording ? (
-              <button
-                type="button"
-                onClick={() => { stopRecording(); }}
-                disabled={isStreaming || isSending}
-                aria-label="Stop recording"
-                className="relative w-11 h-11 rounded-2xl border transition-all duration-200 shadow-lg flex-shrink-0
-                           bg-gradient-to-r from-red-500 to-pink-600 border-red-500 text-white hover:shadow-xl scale-110 animate-pulse-subtle
-                           focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-2"
-                title="Stop recording"
-              >
-                <MicIcon className="w-4 h-4 mx-auto" />
-                <div className="absolute inset-0 rounded-2xl bg-red-400/30 animate-ping" />
-              </button>
-            ) : input.trim() ? (
-              <button
-                onClick={send}
-                disabled={isStreaming || isSending}
-                className="w-11 h-11 rounded-2xl bg-gradient-to-r from-sky-300 to-sky-400 text-white flex items-center justify-center transition-all duration-200 hover:shadow-xl disabled:opacity-50 flex-shrink-0 hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2"
-                title="Send message"
-              >
-                <SendIcon className="w-4 h-4 transition-transform duration-200 hover:translate-x-0.5" />
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={startRecording}
-                disabled={isStreaming || isSending || isStarting}
-                aria-label="Start recording"
-                className={`relative w-11 h-11 rounded-2xl border transition-all duration-200 shadow-lg flex-shrink-0
-                           ${isStarting ? 'bg-gray-100 border-gray-200 text-gray-400' : 'bg-white border-gray-200 text-sky-600 hover:bg-sky-50 hover:border-sky-200 hover:scale-105 active:scale-95'}
-                           focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2`}
-                title="Start recording"
-              >
-                <MicIcon className="w-4 h-4 mx-auto transition-transform duration-200" />
-              </button>
+          {/* Input + overlay (still visible, keyboard suppressed while recording) */}
+          <div className="flex-1 relative">
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={handleInputChange}
+              onKeyDown={onKeyDown}
+              placeholder={isRecording ? 'Listening… speak clearly' : 'Describe your housing issue...'}
+              rows={1}
+              readOnly={isRecording}
+              inputMode={isRecording ? 'none' : undefined}
+              className="w-full border border-gray-200/70 bg-white rounded-2xl px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300 focus:border-sky-400 transition-all duration-200 resize-none leading-5 h-11 max-h-24"
+              style={{ scrollbarWidth: 'thin', scrollbarColor: '#cbd5e0 transparent', paddingTop: '10px', paddingBottom: '10px', caretColor: isRecording ? 'transparent' as any : undefined }}
+            />
+            {/* Interim overlay (doesn't rewrite committed text) */}
+            {isRecording && interimTextRef.current && (
+              <div className="pointer-events-none absolute inset-0 rounded-2xl px-4 py-2 text-sm leading-5 flex items-center" aria-hidden="true">
+                <span className="opacity-0 whitespace-pre-wrap">{input}{input ? ' ' : ''}</span>
+                <span className="absolute left-4 right-4 top-1/2 -translate-y-1/2 text-gray-500/80 italic truncate">{interimTextRef.current}</span>
+              </div>
             )}
-
+            {listeningBadge !== 'idle' && (
+              <div className="absolute -top-6 left-2 text-xs text-sky-600">
+                {isStarting ? 'Starting mic…' : 'Listening…'}
+              </div>
+            )}
+            {input.length > 100 && (
+              <div className="absolute -top-6 right-2 text-xs text-gray-400">{input.length}/1000</div>
+            )}
           </div>
+
+          {/* Context button: Stop if recording; else Send if text; else Record */}
+          {isRecording ? (
+            <button
+              type="button"
+              onClick={() => { void stopRecording(); }}
+              disabled={isStreaming || isSending}
+              aria-label="Stop recording"
+              className="relative w-11 h-11 rounded-2xl border flex-shrink-0 bg-gradient-to-r from-red-500 to-pink-600 border-red-500 text-white"
+              title="Stop recording"
+            >
+              <MicIcon className="w-4 h-4 mx-auto" />
+              {audioActive && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />}
+            </button>
+          ) : input.trim() ? (
+            <button
+              onClick={send}
+              disabled={isStreaming || isSending}
+              className="w-11 h-11 rounded-2xl bg-gradient-to-r from-sky-300 to-sky-400 text-white flex items-center justify-center"
+              title="Send message"
+            >
+              <SendIcon className="w-4 h-4" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={startRecording}
+              disabled={isStreaming || isSending || isStarting}
+              aria-label="Start recording"
+              className={`w-11 h-11 rounded-2xl border ${isStarting ? 'bg-gray-100 border-gray-200 text-gray-400' : 'bg-white border-gray-200 text-sky-600'}`}
+              title="Start recording"
+            >
+              <MicIcon className="w-4 h-4 mx-auto" />
+            </button>
+          )}
         </div>
       </div>
     </div>
