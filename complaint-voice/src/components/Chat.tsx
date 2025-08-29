@@ -99,16 +99,11 @@ const CopyButton: React.FC<{
           }
         }
       }
-      
       await navigator.clipboard.writeText(text);
       setDone(true);
       setTimeout(() => setDone(false), 1500);
-    } catch (error) {
-      try {
-        await navigator.clipboard.writeText(text);
-        setDone(true);
-        setTimeout(() => setDone(false), 1500);
-      } catch {}
+    } catch {
+      // ignore
     }
   };
 
@@ -205,7 +200,6 @@ const renderHeader = (text: string, level: number, key: string) => {
   };
   const cls = `${sizes[level] || 'text-base'} font-bold text-gray-900 mt-3 mb-1`;
   
-  // Use createElement instead of JSX.IntrinsicElements
   const tagName = `h${Math.min(3, Math.max(1, level))}`;
   
   if (tagName === 'h1') {
@@ -345,7 +339,7 @@ export default function Chat() {
 
   // Voice state
   const [isRecording, setIsRecording] = useState(false);
-  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false); // fallback only
 
   // Streaming UI state
   const [isStreaming, setIsStreaming] = useState(false);
@@ -356,103 +350,74 @@ export default function Chat() {
   const abortRef = useRef<AbortController | null>(null);
 
   // Scroll state
-  const [showScrollButton, setShowScrollButton] = useState(false);
-  const [isUserScrolling, setIsUserScrolling] = useState(false);
   const [headerBlur, setHeaderBlur] = useState(false);
 
   // Refs
   const recognitionRef = useRef<AnySR | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<BlobPart[]>([]);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null); // fallback
+  const chunksRef = useRef<BlobPart[]>([]); // fallback
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+
+  // Continuous SR buffers and UI throttle
+  const committedTextRef = useRef('');           // finalised transcript (stable)
+  const interimTextRef = useRef('');             // latest interim words for overlay/commit-on-stop
+  const rafUpdateRef = useRef<number | null>(null);
+
+  // UI for listening status and speed
+  const [listeningBadge, setListeningBadge] = useState<'idle' | 'starting' | 'listening'>('idle');
+  const [micReady, setMicReady] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
+  const interimKickRef = useRef<number | null>(null);
+
+  // Optional live overlay toggle
+  const [liveMode] = useState(true);
+
+  // Tiny “speaking” pulse on the mic
+  const [audioActive, setAudioActive] = useState(false);
+
+  // NEW: last-word protection
+  const settleTimerRef = useRef<number | null>(null);
+  const promoteInterimToFinal = () => {
+    const tail = (interimTextRef.current || '').trim();
+    if (!tail) return;
+    committedTextRef.current = (committedTextRef.current + ' ' + tail).replace(/\s+/g, ' ').trim();
+    interimTextRef.current = '';
+    setInput(committedTextRef.current);
+  };
 
   // Add custom styles for animations
   React.useEffect(() => {
     const style = document.createElement('style');
     style.textContent = `
-      @keyframes fade-in {
-        from { opacity: 0; transform: translateY(10px); }
-        to { opacity: 1; transform: translateY(0); }
-      }
-      @keyframes float {
-        0%, 100% { transform: translateY(0); }
-        50% { transform: translateY(-4px); }
-      }
-      @keyframes slide-in {
-        from { opacity: 0; transform: translateX(-20px); }
-        to { opacity: 1; transform: translateX(0); }
-      }
-      @keyframes pulse-subtle {
-        0%, 100% { transform: scale(1.1); }
-        50% { transform: scale(1.15); }
-      }
-      @keyframes pulse-slow {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.6; }
-      }
-      .animate-fade-in {
-        animation: fade-in 0.6s ease-out forwards;
-      }
-      .animate-float {
-        animation: float 3s ease-in-out infinite;
-      }
-      .animate-slide-in {
-        animation: slide-in 0.4s ease-out forwards;
-        opacity: 0;
-      }
-      .animate-pulse-subtle {
-        animation: pulse-subtle 2s ease-in-out infinite;
-      }
-      .animate-pulse-slow {
-        animation: pulse-slow 3s ease-in-out infinite;
-      }
-      .scrollbar-thin {
-        scrollbar-width: thin;
-      }
-      .scrollbar-thumb-sky-200 {
-        scrollbar-color: #bae6fd transparent;
-      }
-      .scrollbar-track-transparent {
-        scrollbar-track-color: transparent;
-      }
-      /* Webkit scrollbar styles */
-      .scrollbar-thin::-webkit-scrollbar {
-        width: 6px;
-      }
-      .scrollbar-thin::-webkit-scrollbar-track {
-        background: transparent;
-      }
-      .scrollbar-thin::-webkit-scrollbar-thumb {
-        background-color: #bae6fd;
-        border-radius: 3px;
-        transition: background-color 0.2s ease;
-      }
-      .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-        background-color: #7dd3fc;
-      }
-      .shadow-3xl {
-        box-shadow: 0 35px 60px -12px rgba(0, 0, 0, 0.25);
-      }
-      /* Advanced hover effects */
-      .hover-lift {
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      }
-      .hover-lift:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
-      }
+      @keyframes fade-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+      @keyframes float { 0%,100% { transform: translateY(0);} 50% { transform: translateY(-4px);} }
+      @keyframes slide-in { from { opacity: 0; transform: translateX(-20px);} to { opacity: 1; transform: translateX(0);} }
+      @keyframes pulse-subtle { 0%,100% { transform: scale(1.1);} 50% { transform: scale(1.15);} }
+      @keyframes pulse-slow { 0%,100% { opacity: 1;} 50% { opacity: 0.6;} }
+      .animate-fade-in { animation: fade-in 0.6s ease-out forwards; }
+      .animate-float { animation: float 3s ease-in-out infinite; }
+      .animate-slide-in { animation: slide-in 0.4s ease-out forwards; opacity: 0; }
+      .animate-pulse-subtle { animation: pulse-subtle 2s ease-in-out infinite; }
+      .animate-pulse-slow { animation: pulse-slow 3s ease-in-out infinite; }
+      .scrollbar-thin { scrollbar-width: thin; }
+      .scrollbar-thumb-sky-200 { scrollbar-color: #bae6fd transparent; }
+      .scrollbar-track-transparent { scrollbar-track-color: transparent; }
+      .scrollbar-thin::-webkit-scrollbar { width: 6px; }
+      .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+      .scrollbar-thin::-webkit-scrollbar-thumb { background-color: #bae6fd; border-radius: 3px; transition: background-color 0.2s ease; }
+      .scrollbar-thin::-webkit-scrollbar-thumb:hover { background-color: #7dd3fc; }
+      .shadow-3xl { box-shadow: 0 35px 60px -12px rgba(0,0,0,0.25); }
+      .hover-lift { transition: all 0.3s cubic-bezier(0.4,0,0.2,1); }
+      .hover-lift:hover { transform: translateY(-2px); box-shadow: 0 20px 40px rgba(0,0,0,0.15); }
     `;
     document.head.appendChild(style);
-    return () => {
-      document.head.removeChild(style);
-    };
+    return () => document.head.removeChild(style);
   }, []);
 
-  // Improved scroll to bottom that actually works
+  // Improved scroll to bottom
   const scrollToBottom = useCallback(() => {
     if (!scrollerRef.current) return;
-    
     requestAnimationFrame(() => {
       if (scrollerRef.current) {
         scrollerRef.current.scrollTop = scrollerRef.current.scrollHeight;
@@ -460,122 +425,244 @@ export default function Chat() {
     });
   }, []);
 
-  // Handle scroll for dynamic header blur - debounced for performance
+  // Dynamic header blur
   const handleScroll = useCallback(() => {
     if (!scrollerRef.current) return;
     const scrolled = scrollerRef.current.scrollTop > 20;
-    if (scrolled !== headerBlur) {
-      setHeaderBlur(scrolled);
-    }
+    if (scrolled !== headerBlur) setHeaderBlur(scrolled);
   }, [headerBlur]);
 
   useEffect(() => {
-  // Focus and adjust height when input changes (typing or voice)
-  if (inputRef.current) {
-    inputRef.current.focus();
-    if (!input) {
-      inputRef.current.style.height = 'auto';
-    } else {
-      // Adjust height for voice input
-      adjustTextareaHeight(inputRef.current);
+    // Focus and adjust height when input changes
+    if (inputRef.current) {
+      inputRef.current.focus();
+      if (!input) {
+        inputRef.current.style.height = 'auto';
+      } else {
+        adjustTextareaHeight(inputRef.current);
+      }
     }
-  }
-}, [input]);
+  }, [input]);
 
-  // Initial focus on mount
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
 
-  // Auto-scroll to bottom on updates - simplified and more reliable
   useEffect(() => {
     scrollToBottom();
   }, [messages, isStreaming, scrollToBottom]);
 
-  // Speech recognition setup
+  // SR instance init only
   useEffect(() => {
     const SR = window.webkitSpeechRecognition || window.SpeechRecognition;
-    if (SR) {
-      const rec = new SR();
-      rec.lang = 'en-GB';
-      rec.interimResults = true;
-      rec.continuous = true;
-      rec.onresult = (e: any) => {
-        const t = Array.from(e.results).map((r: any) => r[0].transcript).join(' ');
-        setInput(t);
-      };
-      rec.onend = () => setIsRecording(false);
-      recognitionRef.current = rec;
-    }
+    if (!SR) return;
+    const rec = new SR();
+    rec.lang = 'en-GB';
+    rec.continuous = true;     // enable continuous dictation
+    rec.interimResults = true; // show partials (but keep them out of the textbox)
+    rec.maxAlternatives = 1;
+    recognitionRef.current = rec;
   }, []);
 
-  const startRecording = async () => {
-    const sessionId = ++voiceSessionRef.current;
-
-    if (recognitionRef.current) {
-      const rec = recognitionRef.current;
-      rec.lang = 'en-GB';
-      rec.interimResults = true;
-      rec.continuous = true;
-
-      rec.onresult = (e: any) => {
-        if (voiceSessionRef.current !== sessionId || isSending) return;
-        const t = Array.from(e.results).map((r: any) => r[0].transcript).join(' ');
-        setInput(t);
-      };
-      rec.onend = () => {
-        if (voiceSessionRef.current === sessionId) setIsRecording(false);
-      };
-      setIsRecording(true);
-      rec.start();
-      return;
-    }
+  const ensureMicPermission = async () => {
+    if (micReady) return true;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mr = new MediaRecorder(stream);
-      chunksRef.current = [];
-      mr.ondataavailable = (e) => chunksRef.current.push(e.data);
-      mr.onstop = async () => {
-        setIsTranscribing(true);
-        try {
-          const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-          const fd = new FormData();
-          fd.append('audio', blob, 'note.webm');
-          const res = await fetch('/api/transcribe', { method: 'POST', body: fd });
-          const data = await res.json();
-          if (voiceSessionRef.current === sessionId && !isSending && data?.text) setInput(data.text);
-        } catch (error) {
-          console.error('Transcription failed:', error);
-        }
-        setIsTranscribing(false);
-        setIsRecording(false);
-        stream.getTracks().forEach(t => t.stop());
-      };
-      mr.start();
-      mediaRecorderRef.current = mr;
+      stream.getTracks().forEach(t => t.stop());
+      setMicReady(true);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // Start continuous recording with overlay and auto-restart
+  const startRecording = async () => {
+    if (isStarting || isRecording || isSending) return;
+    setIsStarting(true);
+    setListeningBadge('starting');
+
+    const rec = recognitionRef.current;
+
+    // Fallback if SR not available
+    if (!rec) {
+      try {
+        const ok = await ensureMicPermission();
+        if (!ok) { setIsStarting(false); setListeningBadge('idle'); return; }
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mr = new MediaRecorder(stream);
+        chunksRef.current = [];
+        mr.ondataavailable = (e) => chunksRef.current.push(e.data);
+        mr.onstop = async () => {
+          setIsTranscribing(true);
+          try {
+            const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+            const fd = new FormData();
+            fd.append('audio', blob, 'note.webm');
+            const res = await fetch('/api/transcribe', { method: 'POST', body: fd });
+            const data = await res.json();
+            if (data?.text) {
+              committedTextRef.current = (input.trim() + ' ' + data.text).trim();
+              setInput(committedTextRef.current);
+            }
+          } catch {}
+          setIsTranscribing(false);
+          setIsRecording(false);
+          setListeningBadge('idle');
+          stream.getTracks().forEach(t => t.stop());
+        };
+        mr.start();
+        mediaRecorderRef.current = mr;
+        setIsRecording(true);
+        setIsStarting(false);
+        setListeningBadge('listening');
+      } catch {
+        setIsStarting(false);
+        setListeningBadge('idle');
+      }
+      return;
+    }
+
+    const ok = await ensureMicPermission();
+    if (!ok) { setIsStarting(false); setListeningBadge('idle'); return; }
+
+    // Fresh handlers for this run
+    rec.onstart = () => {
       setIsRecording(true);
-    } catch (error) {
-      console.error('Recording failed:', error);
+      setIsStarting(false);
+      setListeningBadge('listening');
+
+      // Reset buffers on actual start to capture first words
+      committedTextRef.current = input.trim();
+      interimTextRef.current = '';
+
+      // kick hint if no interim quickly
+      if (interimKickRef.current) window.clearTimeout(interimKickRef.current);
+      interimKickRef.current = window.setTimeout(() => {
+        // optional reassure hook
+      }, 400);
+    };
+
+    rec.onaudiostart = () => setAudioActive(true);
+    rec.onaudioend = () => setAudioActive(false);
+
+    // Optional: settle quicker when silence detected
+    rec.onspeechend = () => {
+      if (settleTimerRef.current) window.clearTimeout(settleTimerRef.current);
+      settleTimerRef.current = window.setTimeout(() => {
+        if (isRecording) promoteInterimToFinal();
+      }, 250);
+    };
+
+    rec.onresult = (e: any) => {
+      let finalChunk = '';
+      let interimChunk = '';
+
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const result = e.results[i];
+        const transcript = result[0]?.transcript ?? '';
+        if (result.isFinal) finalChunk += transcript + ' ';
+        else interimChunk += transcript + ' ';
+      }
+
+      if (finalChunk) {
+        committedTextRef.current = (committedTextRef.current + ' ' + finalChunk).replace(/\s+/g, ' ').trim();
+        setInput(committedTextRef.current);
+      }
+
+      interimTextRef.current = interimChunk.trim();
+
+      if (interimKickRef.current) {
+        window.clearTimeout(interimKickRef.current);
+        interimKickRef.current = null;
+      }
+
+      // restart the silence settle timer to protect the last word
+      if (settleTimerRef.current) window.clearTimeout(settleTimerRef.current);
+      settleTimerRef.current = window.setTimeout(() => {
+        if (isRecording) promoteInterimToFinal();
+      }, 450);
+
+      // paint next frame for overlay (keeps overlay snappy)
+      if (rafUpdateRef.current) cancelAnimationFrame(rafUpdateRef.current);
+      rafUpdateRef.current = requestAnimationFrame(() => {});
+    };
+
+    rec.onerror = (e: any) => {
+      if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') {
+        setIsRecording(false);
+        setIsStarting(false);
+        setListeningBadge('idle');
+      }
+      // Soft errors handled by onend
+    };
+
+    rec.onend = () => {
+      // Flush any stranded interim so the last word is not lost
+      promoteInterimToFinal();
+      if (settleTimerRef.current) {
+        window.clearTimeout(settleTimerRef.current);
+        settleTimerRef.current = null;
+      }
+
+      // Auto-restart while user expects recording
+      if (isRecording && !isSending) {
+        try { rec.start(); }
+        catch {
+          setTimeout(() => {
+            if (isRecording) { try { rec.start(); } catch {} }
+          }, 120);
+        }
+      } else {
+        setListeningBadge('idle');
+      }
+    };
+
+    try {
+      // Abort any ghost session then start
+      try { (rec as any).abort?.(); } catch {}
+      rec.start();
+    } catch {
+      setIsStarting(false);
+      setListeningBadge('idle');
     }
   };
 
   const stopRecording = () => new Promise<void>((resolve) => {
-    if (recognitionRef.current && isRecording) {
-      const rec: AnySR = recognitionRef.current;
-      const prevOnEnd = rec.onend;
-      rec.onend = (...args: any[]) => {
-        try { prevOnEnd?.(...args); } catch {}
-        setIsRecording(false);
-        resolve();
-      };
-      rec.stop();
+    setIsRecording(false);
+    setIsStarting(false);
+    voiceSessionRef.current += 1; // Invalidate current session
+    setListeningBadge('idle');
+
+    // Give the engine a short grace period to deliver a final result
+    const GRACE = 200;
+    const finish = () => {
+      // Commit any leftover interim so nothing is lost
+      promoteInterimToFinal();
+
+      // SR stop
+      if (recognitionRef.current) {
+        const rec: AnySR = recognitionRef.current;
+        rec.onresult = null;
+        rec.onerror = null;
+        rec.onend = null;
+        try { rec.stop(); } catch {}
+      }
+      resolve();
+    };
+
+    if (recognitionRef.current) {
+      window.setTimeout(finish, GRACE);
       return;
     }
+
+    // Fallback MediaRecorder stop
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.addEventListener('stop', () => resolve(), { once: true });
       mediaRecorderRef.current.stop();
       return;
     }
+
     resolve();
   });
 
@@ -632,7 +719,7 @@ export default function Chat() {
     } catch (e: unknown) {
       setMessages((prev) => {
         const updated = [...prev];
-        updated[holderIndex] = { role: 'assistant', content: `Network error: ${String(e && typeof e === 'object' && 'message' in e ? e.message : e)}` };
+        updated[holderIndex] = { role: 'assistant', content: `Network error: ${String(e && typeof e === 'object' && 'message' in e ? (e as any).message : e)}` };
         return updated;
       });
       setIsStreaming(false);
@@ -657,23 +744,23 @@ export default function Chat() {
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
-    let acc = '';
+    let accStr = '';
 
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
-      acc += decoder.decode(value, { stream: true });
+      accStr += decoder.decode(value, { stream: true });
 
       setMessages((prev) => {
         const updated = [...prev];
         if (updated[holderIndex]?.role === 'assistant') {
-          updated[holderIndex] = { role: 'assistant', content: acc };
+          updated[holderIndex] = { role: 'assistant', content: accStr };
         }
         return updated;
       });
     }
 
-    const parsed = extractLetterBlocks(acc);
+    const parsed = extractLetterBlocks(accStr);
     if (parsed.english || parsed.englishMD || parsed.translation || parsed.translationMD) {
       setMessages((prev) => {
         const before = parsed.before ? [{ role: 'assistant', content: parsed.before } as Msg] : [];
@@ -724,8 +811,6 @@ export default function Chat() {
     const maxHeight = 96; // ~4 lines max
     textarea.style.height = Math.min(scrollHeight, maxHeight) + 'px';
     textarea.style.overflowY = scrollHeight > maxHeight ? 'scroll' : 'hidden';
-
-    // Ensure newest text is visible when at max height
     textarea.scrollTop = textarea.scrollHeight;
   };
 
@@ -738,7 +823,7 @@ export default function Chat() {
     const [messageIndex, setMessageIndex] = useState(0);
     const typingMessages = [
       "AI is thinking",
-      "Analyzing your request",
+      "Analysing your request",
       "Crafting your response",
       "Almost ready"
     ];
@@ -809,38 +894,39 @@ export default function Chat() {
   };
 
   return (
-    <div className="flex flex-col h-[85vh] min-h-[500px] max-h-[900px] w-full max-w-full overflow-hidden 
-                bg-gradient-to-br from-gray-100 via-gray-50 to-sky-100/50 
-                rounded-t-3xl shadow-lg">
+    <div className="flex flex-col h-screen w-full max-w-full overflow-hidden 
+                    bg-gradient-to-br from-gray-100 via-gray-50 to-sky-100/50 
+                    rounded-t-3xl shadow-lg"
+         style={{ height: '100vh', maxHeight: '100vh' }}>
 
-  {/* Header - dynamic blur based on scroll */}
-  <header className={`flex-shrink-0 flex items-center gap-4 p-3 
+      {/* Header - dynamic blur based on scroll; no vertical padding, fixed height */}
+      <header className={`flex-shrink-0 flex items-center gap-4 px-3 h-14 
                      bg-gradient-to-r from-sky-100 via-sky-200 to-sky-300 
                      border-b border-gray-300 transition-all duration-200 ${
                        headerBlur ? 'shadow-lg' : ''
                      }`}>
-    <div className="relative">
-      <div className="h-8 w-8 rounded-2xl bg-gradient-to-br from-sky-300 via-sky-400 to-sky-500 
-                      shadow-lg flex items-center justify-center">
-        <SparkleIcon className="w-4 h-4 text-white" />
-      </div>
-      <div className="absolute -right-1 -bottom-1 h-3 w-3 rounded-full 
-                      bg-gradient-to-r from-emerald-400 to-emerald-500 
-                      ring-2 ring-white shadow-sm animate-pulse-slow"
-           title="Online" />
-    </div>
-    <div className="min-w-0 flex-1">
-      <h1 className="text-lg font-semibold tracking-tight text-gray-900 font-sans">
-        Complaint Letter Assistant
-      </h1>
-    </div>
-  </header>
+        <div className="relative">
+          <div className="h-8 w-8 rounded-2xl bg-gradient-to-br from-sky-300 via-sky-400 to-sky-500 
+                          shadow-lg flex items-center justify-center">
+            <SparkleIcon className="w-4 h-4 text-white" />
+          </div>
+          <div className="absolute -right-1 -bottom-1 h-3 w-3 rounded-full 
+                          bg-gradient-to-r from-emerald-400 to-emerald-500 
+                          ring-2 ring-white shadow-sm animate-pulse-slow"
+               title="Online" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-lg font-semibold tracking-tight text-gray-900 font-sans">
+            Complaint Letter Assistant
+          </h1>
+        </div>
+      </header>
 
-      {/* Messages area - takes remaining space */}
+      {/* Messages area - takes remaining space; no top/bottom padding */}
       <div 
         ref={scrollerRef} 
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto p-4 space-y-2 bg-gradient-to-br from-white via-sky-50 to-sky-100 scrollbar-thin scrollbar-thumb-sky-200 scrollbar-track-transparent"
+        className="flex-1 overflow-y-auto px-4 py-0 space-y-2 bg-gradient-to-br from-white via-sky-50 to-sky-100 scrollbar-thin scrollbar-thumb-sky-200 scrollbar-track-transparent"
         style={{ 
           minHeight: 0,
           overscrollBehavior: 'contain'
@@ -865,7 +951,7 @@ export default function Chat() {
           const isLetterEn = m.meta?.letter === 'en';
           const isLetterTr = m.meta?.letter === 'translation';
 
-        if (isLetterEn) return <LetterBubble key={i} index={i} title="📝 Your Letter (English)" text={m.content} md={m.meta?.md} />;
+          if (isLetterEn) return <LetterBubble key={i} index={i} title="📝 Your Letter (English)" text={m.content} md={m.meta?.md} />;
 
           if (isLetterTr) {
             const lang = m.meta?.langLabel ? ` — ${m.meta.langLabel}` : '';
@@ -909,11 +995,11 @@ export default function Chat() {
         )}
       </div>
 
-      {/* Input area - Polished WhatsApp-style with optimized padding */}
-      <div className="flex-shrink-0 bg-white/80 border-t border-gray-200/50 shadow-2xl p-3 safe-area-inset-bottom">
+      {/* Input area - no top padding, keeps bottom spacing for safe area */}
+      <div className="flex-shrink-0 bg-white/80 border-t border-gray-200/50 shadow-2xl px-3 pb-3 safe-area-inset-bottom">
         <div className="bg-white/90 rounded-3xl border border-gray-200/50 shadow-2xl p-2 hover:shadow-3xl transition-all duration-200">
           <div className="flex items-center gap-2">
-            {/* Draft letter button - now on the left */}
+            {/* Draft letter button */}
             <button
               onClick={writeLetter}
               disabled={isStreaming || isSending}
@@ -924,7 +1010,6 @@ export default function Chat() {
                 'disabled:opacity-50 disabled:cursor-not-allowed',
                 'focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2',
                 'active:scale-95 hover:scale-105 hover:shadow-xl',
-                // Mobile: just pen icon (circular)
                 'w-11 rounded-2xl sm:w-auto sm:px-5 sm:gap-2 sm:rounded-2xl'
               ].join(' ')}
               title="Generate a formal complaint letter"
@@ -933,14 +1018,14 @@ export default function Chat() {
               <span className="hidden sm:inline font-medium text-sm">Draft Letter</span>
             </button>
 
-            {/* Input field */}
+            {/* Input field wrapper with live overlay */}
             <div className="flex-1 relative">
               <textarea
                 ref={inputRef}
                 value={input}
                 onChange={handleInputChange}
                 onKeyDown={onKeyDown}
-                placeholder="Describe your housing issue..."
+                placeholder={listeningBadge === 'listening' ? 'Listening… speak clearly' : 'Describe your housing issue...'}
                 rows={1}
                 className="w-full border border-gray-200/70 bg-white/80 rounded-2xl px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300 focus:border-sky-400 transition-all duration-200 backdrop-blur-sm resize-none leading-5 h-11 max-h-24 flex items-center hover:bg-white/90 hover:border-gray-300/70"
                 style={{ 
@@ -950,6 +1035,30 @@ export default function Chat() {
                   paddingBottom: '10px'
                 }}
               />
+
+              {/* Live overlay shows interim words instantly without shifting layout */}
+              {liveMode && isRecording && interimTextRef.current && (
+                <div
+                  className="pointer-events-none absolute inset-0 rounded-2xl px-4 py-2 text-sm leading-5 flex items-center"
+                  aria-hidden="true"
+                >
+                  {/* Invisible committed text to align the interim start position */}
+                  <span className="opacity-0 whitespace-pre-wrap">
+                    {input}{input ? ' ' : ''}
+                  </span>
+                  {/* Interim words rendered lightly over the textbox */}
+                  <span className="absolute left-4 right-4 top-1/2 -translate-y-1/2 text-gray-500/80 italic truncate">
+                    {interimTextRef.current}
+                  </span>
+                </div>
+              )}
+
+              {/* Small floating listening badge that does not affect layout */}
+              {listeningBadge !== 'idle' && (
+                <div className="absolute -top-6 left-2 text-xs text-sky-600">
+                  {listeningBadge === 'starting' ? 'Starting mic…' : 'Listening…'}
+                </div>
+              )}
               {/* Character counter */}
               {input.length > 100 && (
                 <div className="absolute -top-6 right-2 text-xs text-gray-400 animate-fade-in">
@@ -958,47 +1067,47 @@ export default function Chat() {
               )}
             </div>
 
-{/* Context-sensitive button – mic always visible while recording */}
-{isRecording ? (
-  // Show STOP MIC while recording, regardless of input contents
-  <button
-    type="button"
-    onClick={() => { stopRecording(); }}
-    disabled={isStreaming || isSending}
-    aria-label="Stop recording"
-    className="relative w-11 h-11 rounded-2xl border transition-all duration-200 shadow-lg flex-shrink-0
-               bg-gradient-to-r from-red-500 to-pink-600 border-red-500 text-white hover:shadow-xl scale-110 animate-pulse-subtle
-               focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-2"
-    title="Stop recording"
-  >
-    <MicIcon className="w-4 h-4 mx-auto" />
-    <div className="absolute inset-0 rounded-2xl bg-red-400/30 animate-ping" />
-  </button>
-) : input.trim() ? (
-  // Not recording: show SEND when there is text
-  <button
-    onClick={send}
-    disabled={isStreaming || isSending}
-    className="w-11 h-11 rounded-2xl bg-gradient-to-r from-sky-300 to-sky-400 text-white flex items-center justify-center transition-all duration-200 hover:shadow-xl disabled:opacity-50 flex-shrink-0 hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2"
-    title="Send message"
-  >
-    <SendIcon className="w-4 h-4 transition-transform duration-200 hover:translate-x-0.5" />
-  </button>
-) : (
-  // Not recording + empty: show START MIC
-  <button
-    type="button"
-    onClick={startRecording}
-    disabled={isStreaming || isSending}
-    aria-label="Start recording"
-    className="relative w-11 h-11 rounded-2xl border transition-all duration-200 shadow-lg flex-shrink-0
-               bg-white border-gray-200 text-sky-600 hover:bg-sky-50 hover:border-sky-200 hover:scale-105 active:scale-95
-               focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2"
-    title="Start recording"
-  >
-    <MicIcon className="w-4 h-4 mx-auto transition-transform duration-200 hover:scale-110" />
-  </button>
-)}
+            {/* Mic / Send button with tiny audio pulse */}
+            {isRecording ? (
+              <button
+                type="button"
+                onClick={() => { stopRecording(); }}
+                disabled={isStreaming || isSending}
+                aria-label="Stop recording"
+                className="relative w-11 h-11 rounded-2xl border transition-all duration-200 shadow-lg flex-shrink-0
+                           bg-gradient-to-r from-red-500 to-pink-600 border-red-500 text-white hover:shadow-xl scale-110 animate-pulse-subtle
+                           focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-2"
+                title="Stop recording"
+              >
+                <MicIcon className="w-4 h-4 mx-auto" />
+                <div className="absolute inset-0 rounded-2xl bg-red-400/30 animate-ping" />
+                {audioActive && (
+                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                )}
+              </button>
+            ) : input.trim() ? (
+              <button
+                onClick={send}
+                disabled={isStreaming || isSending}
+                className="w-11 h-11 rounded-2xl bg-gradient-to-r from-sky-300 to-sky-400 text-white flex items-center justify-center transition-all duration-200 hover:shadow-xl disabled:opacity-50 flex-shrink-0 hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2"
+                title="Send message"
+              >
+                <SendIcon className="w-4 h-4 transition-transform duration-200 hover:translate-x-0.5" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={startRecording}
+                disabled={isStreaming || isSending || isStarting}
+                aria-label="Start recording"
+                className={`relative w-11 h-11 rounded-2xl border transition-all duration-200 shadow-lg flex-shrink-0
+                           ${isStarting ? 'bg-gray-100 border-gray-200 text-gray-400' : 'bg-white border-gray-200 text-sky-600 hover:bg-sky-50 hover:border-sky-200 hover:scale-105 active:scale-95'}
+                           focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2`}
+                title="Start recording"
+              >
+                <MicIcon className="w-4 h-4 mx-auto transition-transform duration-200" />
+              </button>
+            )}
 
           </div>
         </div>
