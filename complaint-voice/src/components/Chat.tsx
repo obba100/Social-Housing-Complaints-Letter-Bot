@@ -125,7 +125,6 @@ const CopyButton: React.FC<{
 /* -------- Improved Markdown renderer (bold + italics + simple lists/headings) -------- */
 
 const renderInline = (s: string, keyBase: string) => {
-  // Split on bold first, keep delimiters
   const boldParts = s.split(/(\*\*[^*]+\*\*)/g);
 
   return boldParts.map((bp, bi) => {
@@ -138,7 +137,6 @@ const renderInline = (s: string, keyBase: string) => {
       );
     }
 
-    // Inside non-bold segments, support italics with *...* or _..._
     const italicParts = bp.split(/(\*[^*]+\*|_[^_]+_)/g);
     return italicParts.map((ip, ii) => {
       const iMatch = ip.match(/^\*(.+)\*$/) || ip.match(/^_(.+)_$/);
@@ -149,7 +147,6 @@ const renderInline = (s: string, keyBase: string) => {
           </em>
         );
       }
-      // Handle explicit line breaks within inline segments
       const withBreaks = ip.split(/ {2,}\n|\\n/g);
       return withBreaks.map((chunk, ci) =>
         ci < withBreaks.length - 1 ? (
@@ -199,16 +196,10 @@ const renderHeader = (text: string, level: number, key: string) => {
     3: 'text-base',
   };
   const cls = `${sizes[level] || 'text-base'} font-bold text-gray-900 mt-3 mb-1`;
-  
   const tagName = `h${Math.min(3, Math.max(1, level))}`;
-  
-  if (tagName === 'h1') {
-    return <h1 key={key} className={cls}>{renderInline(text, key)}</h1>;
-  } else if (tagName === 'h2') {
-    return <h2 key={key} className={cls}>{renderInline(text, key)}</h2>;
-  } else {
-    return <h3 key={key} className={cls}>{renderInline(text, key)}</h3>;
-  }
+  if (tagName === 'h1') return <h1 key={key} className={cls}>{renderInline(text, key)}</h1>;
+  if (tagName === 'h2') return <h2 key={key} className={cls}>{renderInline(text, key)}</h2>;
+  return <h3 key={key} className={cls}>{renderInline(text, key)}</h3>;
 };
 
 const renderParagraph = (text: string, key: string) => (
@@ -219,36 +210,15 @@ const renderParagraph = (text: string, key: string) => (
 
 function renderMarkdown(md: string): React.ReactNode {
   if (!md) return null;
-
   const lines = md.replace(/\r\n/g, '\n').split('\n');
   const out: React.ReactNode[] = [];
-
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
-
-    // Skip pure empty lines (they end paragraphs)
-    if (/^\s*$/.test(line)) {
-      i += 1;
-      continue;
-    }
-
-    // Headings: #, ##, ###
+    if (/^\s*$/.test(line)) { i += 1; continue; }
     const h = line.match(/^(#{1,3})\s+(.*)$/);
-    if (h) {
-      out.push(renderHeader(h[2].trim(), h[1].length, `h-${i}`));
-      i += 1;
-      continue;
-    }
-
-    // Horizontal rule (--- or ___)
-    if (/^[-_]{3,}\s*$/.test(line)) {
-      out.push(<hr key={`hr-${i}`} className="my-3 border-amber-200/70" />);
-      i += 1;
-      continue;
-    }
-
-    // Lists (unordered)
+    if (h) { out.push(renderHeader(h[2].trim(), h[1].length, `h-${i}`)); i += 1; continue; }
+    if (/^[-_]{3,}\s*$/.test(line)) { out.push(<hr key={`hr-${i}`} className="my-3 border-amber-200/70" />); i += 1; continue; }
     const ulMatch = line.match(/^\s*[-*]\s+(.+)$/);
     if (ulMatch) {
       const items: { text: string }[] = [];
@@ -261,8 +231,6 @@ function renderMarkdown(md: string): React.ReactNode {
       out.push(renderList(items, false, `ul-${i}-${items.length}`));
       continue;
     }
-
-    // Lists (ordered)
     const olMatch = line.match(/^\s*\d+\.\s+(.+)$/);
     if (olMatch) {
       const items: { text: string }[] = [];
@@ -275,8 +243,6 @@ function renderMarkdown(md: string): React.ReactNode {
       out.push(renderList(items, true, `ol-${i}-${items.length}`));
       continue;
     }
-
-    // Paragraph: accumulate until blank line or block boundary
     const para: string[] = [line];
     i += 1;
     while (
@@ -292,7 +258,6 @@ function renderMarkdown(md: string): React.ReactNode {
     }
     out.push(renderParagraph(para.join('\n'), `p-${i}`));
   }
-
   return <>{out}</>;
 }
 
@@ -352,6 +317,10 @@ export default function Chat() {
   // Scroll state
   const [headerBlur, setHeaderBlur] = useState(false);
 
+  // Device detection
+  const [isAndroid, setIsAndroid] = useState(false);
+  const [isMobile, setIsMobile] = useState(false); // phones or small screens
+
   // Refs
   const recognitionRef = useRef<AnySR | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null); // fallback
@@ -363,6 +332,9 @@ export default function Chat() {
   const committedTextRef = useRef('');           // finalised transcript (stable)
   const interimTextRef = useRef('');             // latest interim words for overlay/commit-on-stop
   const rafUpdateRef = useRef<number | null>(null);
+
+  // Dedup guards for Android
+  const seenFinalsRef = useRef<Set<string>>(new Set());
 
   // UI for listening status and speed
   const [listeningBadge, setListeningBadge] = useState<'idle' | 'starting' | 'listening'>('idle');
@@ -376,49 +348,99 @@ export default function Chat() {
   // Tiny “speaking” pulse on the mic
   const [audioActive, setAudioActive] = useState(false);
 
-  // NEW: last-word protection
+  // Last-word protection
   const settleTimerRef = useRef<number | null>(null);
   const promoteInterimToFinal = () => {
     const tail = (interimTextRef.current || '').trim();
     if (!tail) return;
-    committedTextRef.current = (committedTextRef.current + ' ' + tail).replace(/\s+/g, ' ').trim();
+    committedTextRef.current = normalise(committedTextRef.current + ' ' + tail);
     interimTextRef.current = '';
     setInput(committedTextRef.current);
   };
 
-  // Add custom styles for animations
-React.useEffect(() => {
-  const style = document.createElement('style');
-  style.textContent = `
-    @keyframes fade-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-    @keyframes float { 0%,100% { transform: translateY(0);} 50% { transform: translateY(-4px);} }
-    @keyframes slide-in { from { opacity: 0; transform: translateX(-20px);} to { opacity: 1; transform: translateX(0);} }
-    @keyframes pulse-subtle { 0%,100% { transform: scale(1.1);} 50% { transform: scale(1.15);} }
-    @keyframes pulse-slow { 0%,100% { opacity: 1;} 50% { opacity: 0.6;} }
-    .animate-fade-in { animation: fade-in 0.6s ease-out forwards; }
-    .animate-float { animation: float 3s ease-in-out infinite; }
-    .animate-slide-in { animation: slide-in 0.4s ease-out forwards; opacity: 0; }
-    .animate-pulse-subtle { animation: pulse-subtle 2s ease-in-out infinite; }
-    .animate-pulse-slow { animation: pulse-slow 3s ease-in-out infinite; }
-    .scrollbar-thin { scrollbar-width: thin; }
-    .scrollbar-thumb-sky-200 { scrollbar-color: #bae6fd transparent; }
-    .scrollbar-track-transparent { scrollbar-track-color: transparent; }
-    .scrollbar-thin::-webkit-scrollbar { width: 6px; }
-    .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
-    .scrollbar-thin::-webkit-scrollbar-thumb { background-color: #bae6fd; border-radius: 3px; transition: background-color 0.2s ease; }
-    .scrollbar-thin::-webkit-scrollbar-thumb:hover { background-color: #7dd3fc; }
-    .shadow-3xl { box-shadow: 0 35px 60px -12px rgba(0,0,0,0.25); }
-    .hover-lift { transition: all 0.3s cubic-bezier(0.4,0,0.2,1); }
-    .hover-lift:hover { transform: translateY(-2px); box-shadow: 0 20px 40px rgba(0,0,0,0.15); }
-  `;
-  document.head.appendChild(style);
+  // Normaliser
+  const normalise = (s: string) => s.replace(/\s+/g, ' ').trim();
 
-  // IMPORTANT: do not return the removed node; just perform the side-effect
-  return () => {
-    style.remove();
+  // Android-safe append that avoids loops/duplicates
+  const appendFinalChunk = (raw: string) => {
+    const chunk = normalise(raw);
+    if (!chunk) return;
+
+    // Skip exact repeats
+    if (seenFinalsRef.current.has(chunk)) return;
+
+    const current = committedTextRef.current;
+    if (!current) {
+      committedTextRef.current = chunk;
+      setInput(committedTextRef.current);
+      seenFinalsRef.current.add(chunk);
+      return;
+    }
+
+    // If engine re-sends a previous sentence, ignore it
+    if (current.endsWith(chunk) || current.includes(' ' + chunk + ' ')) {
+      seenFinalsRef.current.add(chunk);
+      return;
+    }
+
+    // Overlap guard: if chunk begins with the tail of current, only add the non-overlapping part
+    const tailLen = Math.min(80, current.length);
+    const tail = current.slice(-tailLen);
+    if (chunk.startsWith(tail)) {
+      const addition = normalise(chunk.slice(tail.length));
+      if (!addition) { seenFinalsRef.current.add(chunk); return; }
+      committedTextRef.current = normalise(current + ' ' + addition);
+    } else {
+      committedTextRef.current = normalise(current + ' ' + chunk);
+    }
+
+    setInput(committedTextRef.current);
+    seenFinalsRef.current.add(chunk);
   };
-}, []);
 
+  // Add custom styles for animations
+  React.useEffect(() => {
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes fade-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+      @keyframes float { 0%,100% { transform: translateY(0);} 50% { transform: translateY(-4px);} }
+      @keyframes slide-in { from { opacity: 0; transform: translateX(-20px);} to { opacity: 1; transform: translateX(0);} }
+      @keyframes pulse-subtle { 0%,100% { transform: scale(1.1);} 50% { transform: scale(1.15);} }
+      @keyframes pulse-slow { 0%,100% { opacity: 1;} 50% { opacity: 0.6;} }
+      .animate-fade-in { animation: fade-in 0.6s ease-out forwards; }
+      .animate-float { animation: float 3s ease-in-out infinite; }
+      .animate-slide-in { animation: slide-in 0.4s ease-out forwards; opacity: 0; }
+      .animate-pulse-subtle { animation: pulse-subtle 2s ease-in-out infinite; }
+      .animate-pulse-slow { animation: pulse-slow 3s ease-in-out infinite; }
+      .scrollbar-thin { scrollbar-width: thin; }
+      .scrollbar-thumb-sky-200 { scrollbar-color: #bae6fd transparent; }
+      .scrollbar-track-transparent { scrollbar-track-color: transparent; }
+      .scrollbar-thin::-webkit-scrollbar { width: 6px; }
+      .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+      .scrollbar-thin::-webkit-scrollbar-thumb { background-color: #bae6fd; border-radius: 3px; transition: background-color 0.2s ease; }
+      .scrollbar-thin::-webkit-scrollbar-thumb:hover { background-color: #7dd3fc; }
+      .shadow-3xl { box-shadow: 0 35px 60px -12px rgba(0,0,0,0.25); }
+      .hover-lift { transition: all 0.3s cubic-bezier(0.4,0,0.2,1); }
+      .hover-lift:hover { transform: translateY(-2px); box-shadow: 0 20px 40px rgba(0,0,0,0.15); }
+    `;
+    document.head.appendChild(style);
+    return () => { style.remove(); };
+  }, []);
+
+  // Device detection
+  useEffect(() => {
+    const ua = navigator.userAgent || '';
+    setIsAndroid(/Android/i.test(ua));
+    const isMobileUA = /Android|iPhone|iPad|iPod/i.test(ua);
+    const isSmallScreen = window.innerWidth < 640;
+    setIsMobile(isMobileUA || isSmallScreen);
+
+    const onResize = () => {
+      setIsMobile(isMobileUA || window.innerWidth < 640);
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   // Improved scroll to bottom
   const scrollToBottom = useCallback(() => {
@@ -438,7 +460,6 @@ React.useEffect(() => {
   }, [headerBlur]);
 
   useEffect(() => {
-    // Focus and adjust height when input changes
     if (inputRef.current) {
       inputRef.current.focus();
       if (!input) {
@@ -507,7 +528,7 @@ React.useEffect(() => {
             const res = await fetch('/api/transcribe', { method: 'POST', body: fd });
             const data = await res.json();
             if (data?.text) {
-              committedTextRef.current = (input.trim() + ' ' + data.text).trim();
+              committedTextRef.current = normalise(input.trim() + ' ' + data.text);
               setInput(committedTextRef.current);
             }
           } catch {}
@@ -540,18 +561,17 @@ React.useEffect(() => {
       // Reset buffers on actual start to capture first words
       committedTextRef.current = input.trim();
       interimTextRef.current = '';
+      seenFinalsRef.current.clear(); // reset dedupe on fresh start
 
       // kick hint if no interim quickly
       if (interimKickRef.current) window.clearTimeout(interimKickRef.current);
-      interimKickRef.current = window.setTimeout(() => {
-        // optional reassure hook
-      }, 400);
+      interimKickRef.current = window.setTimeout(() => {}, 400);
     };
 
     rec.onaudiostart = () => setAudioActive(true);
     rec.onaudioend = () => setAudioActive(false);
 
-    // Optional: settle quicker when silence detected
+    // Settle quicker when silence detected
     rec.onspeechend = () => {
       if (settleTimerRef.current) window.clearTimeout(settleTimerRef.current);
       settleTimerRef.current = window.setTimeout(() => {
@@ -571,8 +591,8 @@ React.useEffect(() => {
       }
 
       if (finalChunk) {
-        committedTextRef.current = (committedTextRef.current + ' ' + finalChunk).replace(/\s+/g, ' ').trim();
-        setInput(committedTextRef.current);
+        // Android sometimes resends old finals on restart — dedupe before append
+        appendFinalChunk(finalChunk);
       }
 
       interimTextRef.current = interimChunk.trim();
@@ -612,12 +632,10 @@ React.useEffect(() => {
 
       // Auto-restart while user expects recording
       if (isRecording && !isSending) {
-        try { rec.start(); }
-        catch {
-          setTimeout(() => {
-            if (isRecording) { try { rec.start(); } catch {} }
-          }, 120);
-        }
+        const delay = isAndroid ? 400 : 120; // gentler restart on Android
+        setTimeout(() => {
+          try { rec.start(); } catch {}
+        }, delay);
       } else {
         setListeningBadge('idle');
       }
@@ -645,7 +663,6 @@ React.useEffect(() => {
       // Commit any leftover interim so nothing is lost
       promoteInterimToFinal();
 
-      // SR stop
       if (recognitionRef.current) {
         const rec: AnySR = recognitionRef.current;
         rec.onresult = null;
@@ -700,11 +717,7 @@ React.useEffect(() => {
     setMessages(nextMessages);
     setInput('');
     
-    // Reset textarea height
-    if (inputRef.current) {
-      inputRef.current.style.height = 'auto';
-    }
-    
+    if (inputRef.current) inputRef.current.style.height = 'auto';
     setIsStreaming(true);
 
     const holderIndex = nextMessages.length;
@@ -858,7 +871,6 @@ React.useEffect(() => {
 
   const LetterBubble: React.FC<{ title: string; text: string; md?: string; index: number }> = ({ title, text, md, index }) => {
     const contentId = `letter-content-${index}`;
-    
     return (
       <div className="mb-6 flex justify-start">
         <div className="max-w-[90%] rounded-3xl overflow-hidden border-2 border-amber-200/80 bg-gradient-to-br from-amber-50/90 via-yellow-50/80 to-orange-50/70 backdrop-blur-md shadow-2xl ring-1 ring-amber-100/60 hover-lift group">
@@ -870,27 +882,13 @@ React.useEffect(() => {
               <span className="text-base font-bold text-amber-900 truncate">{title}</span>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
-              <CopyButton 
-                text={text || md || ''} 
-                label="Copy Rich" 
-                variant="primary" 
-                copyFormatted={true}
-                sourceElementId={contentId}
-              />
-              <CopyButton 
-                text={text || md || ''} 
-                label="Copy Plain" 
-                variant="secondary" 
-              />
+              <CopyButton text={text || md || ''} label="Copy Rich" variant="primary" copyFormatted={true} sourceElementId={contentId} />
+              <CopyButton text={text || md || ''} label="Copy Plain" variant="secondary" />
             </div>
           </div>
           <div className="px-6 py-5 bg-gradient-to-b from-yellow-50/80 to-amber-50/60">
             <div id={contentId} className="whitespace-pre-wrap leading-relaxed text-gray-900 font-medium">
-              {md && md.trim() !== '' ? (
-                renderMarkdown(md)
-              ) : (
-                text
-              )}
+              {md && md.trim() !== '' ? renderMarkdown(md) : text}
             </div>
           </div>
         </div>
@@ -898,27 +896,23 @@ React.useEffect(() => {
     );
   };
 
+  const voiceOnly = isMobile; // on phones, hide the textbox and go edge-to-edge
+
   return (
     <div className="flex flex-col h-screen w-full max-w-full overflow-hidden 
                     bg-gradient-to-br from-gray-100 via-gray-50 to-sky-100/50 
                     rounded-t-3xl shadow-lg"
          style={{ height: '100vh', maxHeight: '100vh' }}>
 
-      {/* Header - dynamic blur based on scroll; no vertical padding, fixed height */}
+      {/* Header */}
       <header className={`flex-shrink-0 flex items-center gap-4 px-3 h-14 
                      bg-gradient-to-r from-sky-100 via-sky-200 to-sky-300 
-                     border-b border-gray-300 transition-all duration-200 ${
-                       headerBlur ? 'shadow-lg' : ''
-                     }`}>
+                     border-b border-gray-300 transition-all duration-200 ${headerBlur ? 'shadow-lg' : ''}`}>
         <div className="relative">
-          <div className="h-8 w-8 rounded-2xl bg-gradient-to-br from-sky-300 via-sky-400 to-sky-500 
-                          shadow-lg flex items-center justify-center">
+          <div className="h-8 w-8 rounded-2xl bg-gradient-to-br from-sky-300 via-sky-400 to-sky-500 shadow-lg flex items-center justify-center">
             <SparkleIcon className="w-4 h-4 text-white" />
           </div>
-          <div className="absolute -right-1 -bottom-1 h-3 w-3 rounded-full 
-                          bg-gradient-to-r from-emerald-400 to-emerald-500 
-                          ring-2 ring-white shadow-sm animate-pulse-slow"
-               title="Online" />
+          <div className="absolute -right-1 -bottom-1 h-3 w-3 rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-white shadow-sm animate-pulse-slow" title="Online" />
         </div>
         <div className="min-w-0 flex-1">
           <h1 className="text-lg font-semibold tracking-tight text-gray-900 font-sans">
@@ -927,25 +921,23 @@ React.useEffect(() => {
         </div>
       </header>
 
-      {/* Messages area - takes remaining space; no top/bottom padding */}
+      {/* Messages area */}
       <div 
         ref={scrollerRef} 
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-4 py-0 space-y-2 bg-gradient-to-br from-white via-sky-50 to-sky-100 scrollbar-thin scrollbar-thumb-sky-200 scrollbar-track-transparent"
-        style={{ 
-          minHeight: 0,
-          overscrollBehavior: 'contain'
-        }}
+        className={`flex-1 overflow-y-auto ${voiceOnly ? 'px-0' : 'px-4'} py-0 space-y-2 bg-gradient-to-br from-white via-sky-50 to-sky-100 scrollbar-thin scrollbar-thumb-sky-200 scrollbar-track-transparent`}
+        style={{ minHeight: 0, overscrollBehavior: 'contain' }}
       >
         {messages.length === 0 && (
           <div className="flex items-center justify-center h-full">
-            <div className="text-center max-w-md mx-auto px-4 animate-fade-in">
+            <div className={`text-center max-w-md mx-auto ${voiceOnly ? 'px-3' : 'px-4'} animate-fade-in`}>
               <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-sky-300 via-sky-400 to-sky-500 flex items-center justify-center mx-auto mb-4 shadow-lg animate-float">
                 <SparkleIcon className="w-8 h-8 text-white" />
               </div>
               <h2 className="text-lg font-semibold text-gray-900 mb-2">Start Your Complaint</h2>
               <p className="text-gray-600 text-sm leading-relaxed">
-                Describe your housing issue, or use the mic to speak. Include dates, who you contacted, and what resolution you're seeking.
+                {voiceOnly ? 'Tap the mic and speak. We will capture your words and you can send or draft when ready.' :
+                  'Describe your housing issue, or use the mic to speak. Include dates, who you contacted, and what resolution you\'re seeking.'}
               </p>
             </div>
           </div>
@@ -964,8 +956,7 @@ React.useEffect(() => {
           }
 
           return (
-            <div key={i} className={`flex mb-4 animate-slide-in ${isUser ? 'justify-end' : 'justify-start'}`} 
-                 style={{ animationDelay: `${i * 100}ms` }}>
+            <div key={i} className={`flex mb-4 animate-slide-in ${isUser ? 'justify-end' : 'justify-start'}`} style={{ animationDelay: `${i * 100}ms` }}>
               <div
                 className={[
                   'max-w-[85%] px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap shadow-lg backdrop-blur-sm transition-all duration-200 hover:shadow-xl',
@@ -1000,104 +991,54 @@ React.useEffect(() => {
         )}
       </div>
 
-      {/* Input area - no top padding, keeps bottom spacing for safe area */}
-      <div className="flex-shrink-0 bg-white/80 border-t border-gray-200/50 shadow-2xl px-3 pb-3 safe-area-inset-bottom">
-        <div className="bg-white/90 rounded-3xl border border-gray-200/50 shadow-2xl p-2 hover:shadow-3xl transition-all duration-200">
-          <div className="flex items-center gap-2">
-            {/* Draft letter button */}
+      {/* Bottom action area */}
+      {voiceOnly ? (
+        // Mobile / Android: edge-to-edge, no textarea
+        <div className="flex-shrink-0 bg-white border-t border-gray-200 shadow-2xl px-0 pb-[max(env(safe-area-inset-bottom),12px)]">
+          {/* Live transcript line (lightweight) */}
+          {(isRecording || input.trim()) && (
+            <div className="px-4 py-2 text-sm text-gray-700">
+              <span className="whitespace-pre-wrap">
+                {input}{interimTextRef.current ? (' ' + interimTextRef.current) : ''}
+              </span>
+            </div>
+          )}
+          {/* Full-width buttons */}
+          <div className="grid grid-cols-3 divide-x divide-gray-200">
+            {/* Draft */}
             <button
               onClick={writeLetter}
               disabled={isStreaming || isSending}
-              className={[
-                'h-11 transition-all duration-200 shadow-lg flex-shrink-0 flex items-center justify-center',
-                'bg-gradient-to-r from-sky-300 via-sky-400 to-sky-500 text-white',
-                'hover:from-sky-400 hover:via-sky-500 hover:to-sky-600',
-                'disabled:opacity-50 disabled:cursor-not-allowed',
-                'focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2',
-                'active:scale-95 hover:scale-105 hover:shadow-xl',
-                'w-11 rounded-2xl sm:w-auto sm:px-5 sm:gap-2 sm:rounded-2xl'
-              ].join(' ')}
-              title="Generate a formal complaint letter"
+              className="h-12 w-full flex items-center justify-center text-sm font-medium bg-gradient-to-r from-sky-300 via-sky-400 to-sky-500 text-white active:scale-95 disabled:opacity-50"
+              title="Draft Letter"
             >
-              <PenIcon className="w-4 h-4 transition-transform duration-200 group-hover:rotate-12" />
-              <span className="hidden sm:inline font-medium text-sm">Draft Letter</span>
+              <PenIcon className="w-4 h-4 mr-2" /> Draft
             </button>
 
-            {/* Input field wrapper with live overlay */}
-            <div className="flex-1 relative">
-              <textarea
-                ref={inputRef}
-                value={input}
-                onChange={handleInputChange}
-                onKeyDown={onKeyDown}
-                placeholder={listeningBadge === 'listening' ? 'Listening… speak clearly' : 'Describe your housing issue...'}
-                rows={1}
-                className="w-full border border-gray-200/70 bg-white/80 rounded-2xl px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300 focus:border-sky-400 transition-all duration-200 backdrop-blur-sm resize-none leading-5 h-11 max-h-24 flex items-center hover:bg-white/90 hover:border-gray-300/70"
-                style={{ 
-                  scrollbarWidth: 'thin',
-                  scrollbarColor: '#cbd5e0 transparent',
-                  paddingTop: '10px',
-                  paddingBottom: '10px'
-                }}
-              />
+            {/* Send */}
+            <button
+              onClick={send}
+              disabled={isStreaming || isSending || !input.trim()}
+              className="h-12 w-full flex items-center justify-center text-sm font-medium bg-sky-600 text-white active:scale-95 disabled:bg-gray-200 disabled:text-gray-400"
+              title="Send"
+            >
+              <SendIcon className="w-4 h-4 mr-2" /> Send
+            </button>
 
-              {/* Live overlay shows interim words instantly without shifting layout */}
-              {liveMode && isRecording && interimTextRef.current && (
-                <div
-                  className="pointer-events-none absolute inset-0 rounded-2xl px-4 py-2 text-sm leading-5 flex items-center"
-                  aria-hidden="true"
-                >
-                  {/* Invisible committed text to align the interim start position */}
-                  <span className="opacity-0 whitespace-pre-wrap">
-                    {input}{input ? ' ' : ''}
-                  </span>
-                  {/* Interim words rendered lightly over the textbox */}
-                  <span className="absolute left-4 right-4 top-1/2 -translate-y-1/2 text-gray-500/80 italic truncate">
-                    {interimTextRef.current}
-                  </span>
-                </div>
-              )}
-
-              {/* Small floating listening badge that does not affect layout */}
-              {listeningBadge !== 'idle' && (
-                <div className="absolute -top-6 left-2 text-xs text-sky-600">
-                  {listeningBadge === 'starting' ? 'Starting mic…' : 'Listening…'}
-                </div>
-              )}
-              {/* Character counter */}
-              {input.length > 100 && (
-                <div className="absolute -top-6 right-2 text-xs text-gray-400 animate-fade-in">
-                  {input.length}/1000
-                </div>
-              )}
-            </div>
-
-            {/* Mic / Send button with tiny audio pulse */}
+            {/* Mic */}
             {isRecording ? (
               <button
                 type="button"
                 onClick={() => { stopRecording(); }}
                 disabled={isStreaming || isSending}
                 aria-label="Stop recording"
-                className="relative w-11 h-11 rounded-2xl border transition-all duration-200 shadow-lg flex-shrink-0
-                           bg-gradient-to-r from-red-500 to-pink-600 border-red-500 text-white hover:shadow-xl scale-110 animate-pulse-subtle
-                           focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-2"
-                title="Stop recording"
+                className="relative h-12 w-full flex items-center justify-center text-sm font-medium bg-gradient-to-r from-red-500 to-pink-600 text-white active:scale-95"
+                title="Stop"
               >
-                <MicIcon className="w-4 h-4 mx-auto" />
-                <div className="absolute inset-0 rounded-2xl bg-red-400/30 animate-ping" />
+                <MicIcon className="w-4 h-4 mr-2" /> Stop
                 {audioActive && (
-                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="absolute right-2 w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
                 )}
-              </button>
-            ) : input.trim() ? (
-              <button
-                onClick={send}
-                disabled={isStreaming || isSending}
-                className="w-11 h-11 rounded-2xl bg-gradient-to-r from-sky-300 to-sky-400 text-white flex items-center justify-center transition-all duration-200 hover:shadow-xl disabled:opacity-50 flex-shrink-0 hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2"
-                title="Send message"
-              >
-                <SendIcon className="w-4 h-4 transition-transform duration-200 hover:translate-x-0.5" />
               </button>
             ) : (
               <button
@@ -1105,18 +1046,129 @@ React.useEffect(() => {
                 onClick={startRecording}
                 disabled={isStreaming || isSending || isStarting}
                 aria-label="Start recording"
-                className={`relative w-11 h-11 rounded-2xl border transition-all duration-200 shadow-lg flex-shrink-0
-                           ${isStarting ? 'bg-gray-100 border-gray-200 text-gray-400' : 'bg-white border-gray-200 text-sky-600 hover:bg-sky-50 hover:border-sky-200 hover:scale-105 active:scale-95'}
-                           focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2`}
-                title="Start recording"
+                className={`h-12 w-full flex items-center justify-center text-sm font-medium ${isStarting ? 'bg-gray-100 text-gray-400' : 'bg-emerald-600 text-white active:scale-95'}`}
+                title="Record"
               >
-                <MicIcon className="w-4 h-4 mx-auto transition-transform duration-200" />
+                <MicIcon className="w-4 h-4 mr-2" /> Record
               </button>
             )}
-
           </div>
         </div>
-      </div>
+      ) : (
+        // Desktop / larger screens: original textarea + buttons
+        <div className="flex-shrink-0 bg-white/80 border-t border-gray-200/50 shadow-2xl px-3 pb-3 safe-area-inset-bottom">
+          <div className="bg-white/90 rounded-3xl border border-gray-200/50 shadow-2xl p-2 hover:shadow-3xl transition-all duration-200">
+            <div className="flex items-center gap-2">
+              {/* Draft letter button */}
+              <button
+                onClick={writeLetter}
+                disabled={isStreaming || isSending}
+                className={[
+                  'h-11 transition-all duration-200 shadow-lg flex-shrink-0 flex items-center justify-center',
+                  'bg-gradient-to-r from-sky-300 via-sky-400 to-sky-500 text-white',
+                  'hover:from-sky-400 hover:via-sky-500 hover:to-sky-600',
+                  'disabled:opacity-50 disabled:cursor-not-allowed',
+                  'focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2',
+                  'active:scale-95 hover:scale-105 hover:shadow-xl',
+                  'w-11 rounded-2xl sm:w-auto sm:px-5 sm:gap-2 sm:rounded-2xl'
+                ].join(' ')}
+                title="Generate a formal complaint letter"
+              >
+                <PenIcon className="w-4 h-4 transition-transform duration-200 group-hover:rotate-12" />
+                <span className="hidden sm:inline font-medium text-sm">Draft Letter</span>
+              </button>
+
+              {/* Input field wrapper with live overlay */}
+              <div className="flex-1 relative">
+                <textarea
+                  ref={inputRef}
+                  value={input}
+                  onChange={handleInputChange}
+                  onKeyDown={onKeyDown}
+                  placeholder={listeningBadge === 'listening' ? 'Listening… speak clearly' : 'Describe your housing issue...'}
+                  rows={1}
+                  className="w-full border border-gray-200/70 bg-white/80 rounded-2xl px-4 text-sm outline-none focus:ring-2 focus:ring-sky-300 focus:border-sky-400 transition-all duration-200 backdrop-blur-sm resize-none leading-5 h-11 max-h-24 flex items-center hover:bg-white/90 hover:border-gray-300/70"
+                  style={{ 
+                    scrollbarWidth: 'thin',
+                    scrollbarColor: '#cbd5e0 transparent',
+                    paddingTop: '10px',
+                    paddingBottom: '10px'
+                  }}
+                />
+
+                {/* Live overlay shows interim words instantly without shifting layout */}
+                {liveMode && isRecording && interimTextRef.current && (
+                  <div
+                    className="pointer-events-none absolute inset-0 rounded-2xl px-4 py-2 text-sm leading-5 flex items-center"
+                    aria-hidden="true"
+                  >
+                    <span className="opacity-0 whitespace-pre-wrap">
+                      {input}{input ? ' ' : ''}
+                    </span>
+                    <span className="absolute left-4 right-4 top-1/2 -translate-y-1/2 text-gray-500/80 italic truncate">
+                      {interimTextRef.current}
+                    </span>
+                  </div>
+                )}
+
+                {listeningBadge !== 'idle' && (
+                  <div className="absolute -top-6 left-2 text-xs text-sky-600">
+                    {listeningBadge === 'starting' ? 'Starting mic…' : 'Listening…'}
+                  </div>
+                )}
+                {input.length > 100 && (
+                  <div className="absolute -top-6 right-2 text-xs text-gray-400 animate-fade-in">
+                    {input.length}/1000
+                  </div>
+                )}
+              </div>
+
+              {/* Mic / Send button with tiny audio pulse */}
+              {isRecording ? (
+                <button
+                  type="button"
+                  onClick={() => { stopRecording(); }}
+                  disabled={isStreaming || isSending}
+                  aria-label="Stop recording"
+                  className="relative w-11 h-11 rounded-2xl border transition-all duration-200 shadow-lg flex-shrink-0
+                             bg-gradient-to-r from-red-500 to-pink-600 border-red-500 text-white hover:shadow-xl scale-110 animate-pulse-subtle
+                             focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-2"
+                  title="Stop recording"
+                >
+                  <MicIcon className="w-4 h-4 mx-auto" />
+                  <div className="absolute inset-0 rounded-2xl bg-red-400/30 animate-ping" />
+                  {audioActive && (
+                    <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                  )}
+                </button>
+              ) : input.trim() ? (
+                <button
+                  onClick={send}
+                  disabled={isStreaming || isSending}
+                  className="w-11 h-11 rounded-2xl bg-gradient-to-r from-sky-300 to-sky-400 text-white flex items-center justify-center transition-all duration-200 hover:shadow-xl disabled:opacity-50 flex-shrink-0 hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2"
+                  title="Send message"
+                >
+                  <SendIcon className="w-4 h-4 transition-transform duration-200 hover:translate-x-0.5" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={startRecording}
+                  disabled={isStreaming || isSending || isStarting}
+                  aria-label="Start recording"
+                  className={`relative w-11 h-11 rounded-2xl border transition-all duration-200 shadow-lg flex-shrink-0
+                             ${isStarting ? 'bg-gray-100 border-gray-200 text-gray-400' : 'bg-white border-gray-200 text-sky-600 hover:bg-sky-50 hover:border-sky-200 hover:scale-105 active:scale-95'}
+                             focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2`}
+                  title="Start recording"
+                >
+                  <MicIcon className="w-4 h-4 mx-auto transition-transform duration-200" />
+                </button>
+              )}
+
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
