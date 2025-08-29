@@ -444,7 +444,9 @@ export default function Chat() {
       }
     `;
     document.head.appendChild(style);
-    return () => document.head.removeChild(style);
+    return () => {
+      document.head.removeChild(style);
+    };
   }, []);
 
   // Improved scroll to bottom that actually works
